@@ -1,0 +1,23 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Folder Include="Interfaces\" />
+    <Folder Include="Services\" />
+  </ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="CloudinaryDotNet" Version="1.28.0" />
+	</ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MV.DomainLayer\MV.DomainLayer.csproj" />
+    <ProjectReference Include="..\MV.InfrastructureLayer\MV.InfrastructureLayer.csproj" />
+  </ItemGroup>
+
+</Project>
