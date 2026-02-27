@@ -109,19 +109,37 @@ namespace MV.PresentationLayer
             builder.Services.AddDbContext<FashionDbContext>(options =>
                 options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-            // Repositories
+            // Repositories - Milestone 1
             builder.Services.AddScoped<IUserRepository, UserRepository>();
             builder.Services.AddScoped<IOtpCodeRepository, OtpCodeRepository>();
             builder.Services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
             builder.Services.AddScoped<IUserAddressRepository, UserAddressRepository>();
             builder.Services.AddScoped<IUserBodyProfileRepository, UserBodyProfileRepository>();
 
-            // Services
+            // Repositories - Milestone 2
+            builder.Services.AddScoped<ICategoryRepository, CategoryRepository>();
+            builder.Services.AddScoped<IProductRepository, ProductRepository>();
+            builder.Services.AddScoped<IProductVariantRepository, ProductVariantRepository>();
+            builder.Services.AddScoped<IProductImageRepository, ProductImageRepository>();
+            builder.Services.AddScoped<ISizeGuideRepository, SizeGuideRepository>();
+            builder.Services.AddScoped<ICartItemRepository, CartItemRepository>();
+            builder.Services.AddScoped<IWishlistRepository, WishlistRepository>();
+            builder.Services.AddScoped<IVoucherRepository, VoucherRepository>();
+            builder.Services.AddScoped<IProductReviewRepository, ProductReviewRepository>();
+
+            // Services - Milestone 1
             builder.Services.AddScoped<IEmailService, EmailService>();
             builder.Services.AddScoped<IAuthService, AuthService>();
             builder.Services.AddScoped<IUserService, UserService>();
             builder.Services.AddScoped<IBodyProfileService, BodyProfileService>();
             builder.Services.AddScoped<IAddressService, AddressService>();
+
+            // Services - Milestone 2
+            builder.Services.AddScoped<ICategoryService, CategoryService>();
+            builder.Services.AddScoped<IProductService, ProductService>();
+            builder.Services.AddScoped<ICartService, CartService>();
+            builder.Services.AddScoped<IWishlistService, WishlistService>();
+            builder.Services.AddScoped<IVoucherService, VoucherService>();
 
             // HttpClient for external API calls
             builder.Services.AddHttpClient();
