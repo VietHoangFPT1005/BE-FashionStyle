@@ -1,0 +1,113 @@
+using Microsoft.EntityFrameworkCore;
+using MV.ApplicationLayer.ServiceInterfaces;
+using MV.DomainLayer.DTOs.Common;
+using MV.DomainLayer.DTOs.Review.Request;
+using MV.DomainLayer.DTOs.Review.Response;
+using MV.DomainLayer.Entities;
+using MV.InfrastructureLayer.DBContext;
+using MV.InfrastructureLayer.Interfaces;
+
+namespace MV.ApplicationLayer.Services
+{
+    public class ReviewService : IReviewService
+    {
+        private readonly FashionDbContext _context;
+        private readonly IProductRepository _productRepository;
+        private readonly IOrderItemRepository _orderItemRepository;
+        private readonly IProductReviewRepository _reviewRepository;
+
+        public ReviewService(
+            FashionDbContext context,
+            IProductRepository productRepository,
+            IOrderItemRepository orderItemRepository,
+            IProductReviewRepository reviewRepository)
+        {
+            _context = context;
+            _productRepository = productRepository;
+            _orderItemRepository = orderItemRepository;
+            _reviewRepository = reviewRepository;
+        }
+
+        public async Task<ApiResponse<CreateReviewResponse>> CreateReviewAsync(
+            int userId, int productId, CreateReviewRequest request)
+        {
+            // Check product exists
+            if (!await _productRepository.ExistsAndActiveAsync(productId))
+                return ApiResponse<CreateReviewResponse>.ErrorResponse("Product not found.");
+
+            // Check user has purchased this product and order is DELIVERED
+            var hasPurchased = await _orderItemRepository.HasUserPurchasedProductAsync(userId, productId);
+            if (!hasPurchased)
+                return ApiResponse<CreateReviewResponse>.ErrorResponse(
+                    "You have not purchased this product or your order has not been delivered yet.");
+
+            // Check if user already reviewed this product
+            var existingReview = await _context.ProductReviews
+                .AnyAsync(r => r.ProductId == productId && r.UserId == userId);
+            if (existingReview)
+                return ApiResponse<CreateReviewResponse>.ErrorResponse(
+                    "You have already reviewed this product.");
+
+            // Find the orderId for this review (latest delivered order with this product)
+            var orderItem = await _context.OrderItems
+                .Include(oi => oi.Order)
+                .Include(oi => oi.ProductVariant)
+                .Where(oi =>
+                    oi.Order.UserId == userId &&
+                    oi.Order.Status == "DELIVERED" &&
+                    oi.ProductVariant != null &&
+                    oi.ProductVariant.ProductId == productId)
+                .OrderByDescending(oi => oi.Order.DeliveredAt)
+                .FirstOrDefaultAsync();
+
+            // Create review
+            var review = new ProductReview
+            {
+                ProductId = productId,
+                UserId = userId,
+                OrderId = orderItem?.OrderId,
+                Rating = request.Rating,
+                Comment = request.Comment,
+                ReviewImageUrl = request.ReviewImageUrl,
+                HeightCm = request.HeightCm,
+                WeightKg = request.WeightKg,
+                SizeOrdered = request.SizeOrdered,
+                ShowBodyInfo = request.ShowBodyInfo,
+                CreatedAt = DateTime.Now
+            };
+
+            _context.ProductReviews.Add(review);
+            await _context.SaveChangesAsync();
+
+            // Update Product's AverageRating and TotalReviews
+            var avgRating = await _context.ProductReviews
+                .Where(r => r.ProductId == productId)
+                .AverageAsync(r => (decimal)r.Rating);
+            var totalReviews = await _context.ProductReviews
+                .CountAsync(r => r.ProductId == productId);
+
+            await _context.Products
+                .Where(p => p.Id == productId)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(p => p.AverageRating, Math.Round(avgRating, 1))
+                    .SetProperty(p => p.TotalReviews, totalReviews));
+
+            var response = new CreateReviewResponse
+            {
+                ReviewId = review.Id,
+                ProductId = productId,
+                Rating = review.Rating,
+                Comment = review.Comment,
+                BodyInfo = request.ShowBodyInfo ? new ReviewBodyInfoResponse
+                {
+                    HeightCm = request.HeightCm,
+                    WeightKg = request.WeightKg,
+                    SizeOrdered = request.SizeOrdered
+                } : null,
+                CreatedAt = review.CreatedAt
+            };
+
+            return ApiResponse<CreateReviewResponse>.SuccessResponse(response, "Review submitted successfully.");
+        }
+    }
+}

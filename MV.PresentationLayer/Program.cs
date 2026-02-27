@@ -102,8 +102,9 @@ namespace MV.PresentationLayer
             // TỐI ƯU SỐ 2: Bổ sung các Dependency Injection bị thiếu
             // ==============================================
 
-            // Đọc SmtpSettings từ appsettings.json
+            // Đọc Settings từ appsettings.json
             builder.Services.Configure<SmtpSettings>(builder.Configuration.GetSection("SmtpSettings"));
+            builder.Services.Configure<SePaySettings>(builder.Configuration.GetSection("SePay"));
 
             // Register DbContext
             builder.Services.AddDbContext<FashionDbContext>(options =>
@@ -140,6 +141,17 @@ namespace MV.PresentationLayer
             builder.Services.AddScoped<ICartService, CartService>();
             builder.Services.AddScoped<IWishlistService, WishlistService>();
             builder.Services.AddScoped<IVoucherService, VoucherService>();
+
+            // Repositories - Milestone 3
+            builder.Services.AddScoped<IOrderRepository, OrderRepository>();
+            builder.Services.AddScoped<IOrderItemRepository, OrderItemRepository>();
+            builder.Services.AddScoped<IPaymentRepository, PaymentRepository>();
+            builder.Services.AddScoped<INotificationRepository, NotificationRepository>();
+
+            // Services - Milestone 3
+            builder.Services.AddScoped<IOrderService, OrderService>();
+            builder.Services.AddScoped<IPaymentService, PaymentService>();
+            builder.Services.AddScoped<IReviewService, ReviewService>();
 
             // HttpClient for external API calls
             builder.Services.AddHttpClient();
