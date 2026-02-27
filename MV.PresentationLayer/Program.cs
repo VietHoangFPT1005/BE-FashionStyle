@@ -2,6 +2,10 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using MV.ApplicationLayer.ServiceInterfaces;
+using MV.ApplicationLayer.Services;
+using MV.DomainLayer.Configuration;
+using MV.InfrastructureLayer.DBContext;
 using System.Text;
 
 namespace MV.PresentationLayer
@@ -20,7 +24,6 @@ namespace MV.PresentationLayer
             {
                 options.AddPolicy("AllowFrontend", policy =>
                 {
-                    // Cấp quyền cho Frontend chạy ở cổng 3000 (React) hoặc 5173 (Vite). Có thể thêm URL thật sau.
                     policy.WithOrigins("http://localhost:3000", "http://localhost:5173")
                         .AllowAnyMethod()
                         .AllowAnyHeader()
@@ -97,30 +100,34 @@ namespace MV.PresentationLayer
             // TỐI ƯU SỐ 2: Bổ sung các Dependency Injection bị thiếu
             // ==============================================
 
+            // Đọc SmtpSettings từ appsettings.json
+            builder.Services.Configure<SmtpSettings>(builder.Configuration.GetSection("SmtpSettings"));
+
             // Repositories
 
 
             // Services
+            builder.Services.AddScoped<IEmailService, EmailService>();
 
 
             // Cloudinary (file upload service)
-            
+
 
             // HttpClient for external API calls (Location service)
             builder.Services.AddHttpClient();
 
             // Register DbContext with connection string from appsettings
-            //builder.Services.AddDbContext<FashionDbContext>(options =>
-            //    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection"),
-            //        npgsqlOptions =>
-            //        {
-            //            npgsqlOptions.MigrationsAssembly("MV.InfrastructureLayer");
-            //            npgsqlOptions.MapEnum<MV.DomainLayer.Enums.ProductTypeEnum>(
-            //                "product_type_enum",
-            //                schemaName: null,
-            //                nameTranslator: new Npgsql.NameTranslation.NpgsqlNullNameTranslator());
-            //        })
-            //    .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning)));
+            builder.Services.AddDbContext<FashionDbContext>(options =>
+                options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection"),
+                    npgsqlOptions =>
+                    {
+                        npgsqlOptions.MigrationsAssembly("MV.InfrastructureLayer");
+                        npgsqlOptions.MapEnum<MV.DomainLayer.Enums.ProductTypeEnum>(
+                            "product_type_enum",
+                            schemaName: null,
+                            nameTranslator: new Npgsql.NameTranslation.NpgsqlNullNameTranslator());
+                    })
+                .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning)));
 
             builder.Services.AddEndpointsApiExplorer();
 
