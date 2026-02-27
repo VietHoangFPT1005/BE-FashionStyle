@@ -105,6 +105,7 @@ namespace MV.PresentationLayer
             // Đọc Settings từ appsettings.json
             builder.Services.Configure<SmtpSettings>(builder.Configuration.GetSection("SmtpSettings"));
             builder.Services.Configure<SePaySettings>(builder.Configuration.GetSection("SePay"));
+            builder.Services.Configure<GeminiSettings>(builder.Configuration.GetSection("Gemini"));
 
             // Register DbContext
             builder.Services.AddDbContext<FashionDbContext>(options =>
@@ -152,6 +153,16 @@ namespace MV.PresentationLayer
             builder.Services.AddScoped<IOrderService, OrderService>();
             builder.Services.AddScoped<IPaymentService, PaymentService>();
             builder.Services.AddScoped<IReviewService, ReviewService>();
+
+            // Repositories - Milestone 4
+            builder.Services.AddScoped<IShipperLocationRepository, ShipperLocationRepository>();
+            builder.Services.AddScoped<IChatAiHistoryRepository, ChatAiHistoryRepository>();
+
+            // Services - Milestone 4
+            builder.Services.AddScoped<IShipperService, ShipperService>();
+            builder.Services.AddScoped<IChatAiService, ChatAiService>();
+            builder.Services.AddScoped<INotificationService, NotificationService>();
+            builder.Services.AddScoped<IAdminService, AdminService>();
 
             // HttpClient for external API calls
             builder.Services.AddHttpClient();

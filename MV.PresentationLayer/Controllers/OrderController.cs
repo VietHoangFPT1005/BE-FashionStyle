@@ -14,10 +14,12 @@ namespace MV.PresentationLayer.Controllers
     public class OrderController : ControllerBase
     {
         private readonly IOrderService _orderService;
+        private readonly IShipperService _shipperService;
 
-        public OrderController(IOrderService orderService)
+        public OrderController(IOrderService orderService, IShipperService shipperService)
         {
             _orderService = orderService;
+            _shipperService = shipperService;
         }
 
         /// <summary>
@@ -98,6 +100,32 @@ namespace MV.PresentationLayer.Controllers
                 return Unauthorized(ApiResponse.ErrorResponse("Invalid token."));
 
             var result = await _orderService.CancelOrderAsync(orderId, userId, request);
+            if (!result.Success)
+            {
+                if (result.Message != null && result.Message.Contains("not found"))
+                    return NotFound(result);
+                return BadRequest(result);
+            }
+
+            return Ok(result);
+        }
+
+        /// <summary>
+        /// Track order on map (customer - SHIPPING orders only)
+        /// </summary>
+        [HttpGet("{orderId}/tracking")]
+        [SwaggerOperation(Summary = "Track order on map")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        public async Task<IActionResult> TrackOrder(int orderId)
+        {
+            var userId = GetCurrentUserId();
+            if (userId == 0)
+                return Unauthorized(ApiResponse.ErrorResponse("Invalid token."));
+
+            var result = await _shipperService.TrackOrderAsync(userId, orderId);
             if (!result.Success)
             {
                 if (result.Message != null && result.Message.Contains("not found"))
