@@ -6,6 +6,8 @@ using MV.ApplicationLayer.ServiceInterfaces;
 using MV.ApplicationLayer.Services;
 using MV.DomainLayer.Configuration;
 using MV.InfrastructureLayer.DBContext;
+using MV.InfrastructureLayer.Interfaces;
+using MV.InfrastructureLayer.Repositories;
 using System.Text;
 
 namespace MV.PresentationLayer
@@ -103,31 +105,26 @@ namespace MV.PresentationLayer
             // Đọc SmtpSettings từ appsettings.json
             builder.Services.Configure<SmtpSettings>(builder.Configuration.GetSection("SmtpSettings"));
 
-            // Repositories
+            // Register DbContext
+            builder.Services.AddDbContext<FashionDbContext>(options =>
+                options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
+            // Repositories
+            builder.Services.AddScoped<IUserRepository, UserRepository>();
+            builder.Services.AddScoped<IOtpCodeRepository, OtpCodeRepository>();
+            builder.Services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
+            builder.Services.AddScoped<IUserAddressRepository, UserAddressRepository>();
+            builder.Services.AddScoped<IUserBodyProfileRepository, UserBodyProfileRepository>();
 
             // Services
             builder.Services.AddScoped<IEmailService, EmailService>();
+            builder.Services.AddScoped<IAuthService, AuthService>();
+            builder.Services.AddScoped<IUserService, UserService>();
+            builder.Services.AddScoped<IBodyProfileService, BodyProfileService>();
+            builder.Services.AddScoped<IAddressService, AddressService>();
 
-
-            // Cloudinary (file upload service)
-
-
-            // HttpClient for external API calls (Location service)
+            // HttpClient for external API calls
             builder.Services.AddHttpClient();
-
-            // Register DbContext with connection string from appsettings
-            builder.Services.AddDbContext<FashionDbContext>(options =>
-                options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection"),
-                    npgsqlOptions =>
-                    {
-                        npgsqlOptions.MigrationsAssembly("MV.InfrastructureLayer");
-                        npgsqlOptions.MapEnum<MV.DomainLayer.Enums.ProductTypeEnum>(
-                            "product_type_enum",
-                            schemaName: null,
-                            nameTranslator: new Npgsql.NameTranslation.NpgsqlNullNameTranslator());
-                    })
-                .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning)));
 
             builder.Services.AddEndpointsApiExplorer();
 

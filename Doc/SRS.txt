@@ -1,0 +1,442 @@
+# Tài liệu Đặc tả Yêu cầu Hệ thống (SRS)
+## Dự án: Ứng dụng Bán lẻ Thời trang Big Size (Big Size Fashion App)
+### Phiên bản: 2.0 | Ngày cập nhật: 27/02/2026
+
+---
+
+## 1. Mở đầu (Introduction)
+
+### 1.1 Mục đích (Purpose)
+Tài liệu này đặc tả toàn bộ yêu cầu chức năng, phi chức năng và kỹ thuật cho dự án "Ứng dụng Bán lẻ Thời trang Big Size". Hệ thống được thiết kế đặc biệt nhằm giải quyết "nỗi đau" của người dùng có ngoại cỡ (big size) trong việc tìm kiếm, chọn lựa trang phục và kích cỡ phù hợp thông qua **tư vấn AI** và **quản lý hồ sơ số đo cá nhân**.
+
+### 1.2 Phạm vi dự án (Scope)
+Hệ thống bao gồm:
+- **Ứng dụng Mobile** (Android) cho Customer và Shipper.
+- **Backend API** (ASP.NET Core) phục vụ toàn bộ nghiệp vụ.
+- **Admin Dashboard** (Web) cho Staff và Admin quản lý hệ thống.
+
+Các tính năng kỹ thuật đặc biệt bắt buộc:
+1. **Map Tracking** — Theo dõi vị trí Shipper giao hàng real-time trên bản đồ.
+2. **Thanh toán Online (SePay)** — Tích hợp cổng thanh toán SePay bên cạnh COD.
+3. **Bảo mật OTP** — Gửi mã OTP qua Email khi đăng ký tài khoản và đổi mật khẩu.
+4. **Chat AI** — Dùng AI tư vấn chọn sản phẩm và size phù hợp với số đo người dùng.
+
+### 1.3 Thuật ngữ & Từ viết tắt
+| Thuật ngữ | Giải thích |
+|---|---|
+| Big Size | Quần áo cho người có kích thước lớn, thường từ size XL trở lên |
+| Body Profile | Hồ sơ số đo cơ thể (chiều cao, cân nặng, vòng 1/2/3,...) |
+| Fit-Check | Kiểm tra độ vừa vặn giữa số đo người dùng và thông số sản phẩm |
+| Size Guide | Bảng thông số kích thước chi tiết của từng size trong một sản phẩm |
+| Variant | Biến thể sản phẩm theo Size + Màu sắc |
+| SKU | Stock Keeping Unit — Mã định danh duy nhất cho mỗi biến thể |
+| OTP | One-Time Password — Mã xác thực dùng một lần |
+| SePay | Cổng thanh toán trực tuyến được tích hợp trong hệ thống |
+| COD | Cash On Delivery — Thanh toán khi nhận hàng |
+| JWT | JSON Web Token — Phương thức xác thực API |
+| FCM | Firebase Cloud Messaging — Dịch vụ gửi Push Notification |
+| Soft Delete | Xóa mềm — đánh dấu IsDeleted thay vì xóa khỏi database |
+
+### 1.4 Nhóm người dùng (User Roles)
+Hệ thống phân chia quyền truy cập dựa trên **4 vai trò**:
+
+| Role | Giá trị | Mô tả |
+|---|:---:|---|
+| **Admin** | 1 | Quản trị viên — quyền cao nhất, quản lý toàn bộ hệ thống, dữ liệu nền tảng, nhân sự và báo cáo. |
+| **Staff** | 2 | Nhân viên — quản lý sản phẩm, xử lý đơn hàng, quản lý voucher. |
+| **Customer** | 3 | Khách hàng — người dùng cuối, mua sắm, đánh giá, sử dụng AI tư vấn size. |
+| **Shipper** | 4 | Người giao hàng — nhận đơn, cập nhật vị trí GPS real-time, xác nhận giao hàng. |
+
+---
+
+## 2. Tổng quan Hệ thống (System Overview)
+
+### 2.1 Kiến trúc hệ thống (System Architecture)
+Hệ thống áp dụng mô hình **Clean Architecture** gồm 3 tầng:
+
+```
+┌─────────────────────────────────────────────────────┐
+│              MV.PresentationLayer                   │
+│         (Controllers, Middleware, Filters)           │
+├─────────────────────────────────────────────────────┤
+│              MV.ApplicationLayer                    │
+│         (Services, Interfaces, DTOs, Validators)    │
+├─────────────────────────────────────────────────────┤
+│                MV.DomainLayer                       │
+│         (Entities, Enums, Configurations)           │
+├─────────────────────────────────────────────────────┤
+│                  PostgreSQL                         │
+│              (20 Bảng dữ liệu)                     │
+└─────────────────────────────────────────────────────┘
+```
+
+### 2.2 Công nghệ sử dụng (Technology Stack)
+| Thành phần | Công nghệ |
+|---|---|
+| Backend API | ASP.NET Core 8 (C#) |
+| Database | PostgreSQL 15+ |
+| ORM | Entity Framework Core |
+| Authentication | JWT (Access Token + Refresh Token) |
+| Mã hóa mật khẩu | BCrypt |
+| Thanh toán | SePay API |
+| Lưu trữ ảnh | Cloudinary |
+| Push Notification | Firebase Cloud Messaging (FCM) |
+| AI Chat | Tích hợp LLM API (Gemini / OpenAI) |
+| Map Tracking | Google Maps SDK (Mobile) |
+| Gửi Email OTP | SMTP (Gmail / SendGrid) |
+
+### 2.3 Tổng quan Database (20 Bảng)
+
+**Nhóm Người dùng & Xác thực (5 bảng):**
+Users, UserAddresses, UserBodyProfiles, OtpCodes, RefreshTokens
+
+**Nhóm Sản phẩm (5 bảng):**
+Categories, Products, ProductVariants, SizeGuides, ProductImages
+
+**Nhóm Giao dịch (5 bảng):**
+CartItems, Wishlists, Vouchers, Orders, OrderItems
+
+**Nhóm Thanh toán & Vận chuyển (2 bảng):**
+Payments, ShipperLocations
+
+**Nhóm Tương tác & Tiện ích (3 bảng):**
+ProductReviews, ChatAiHistory, Notifications
+
+---
+
+## 3. Đặc tả Yêu cầu Chức năng (Functional Requirements)
+
+### 3.1 Xác thực & Quản lý Tài khoản (Authentication & Account)
+
+| Mã | Tên chức năng | Customer | Staff | Admin | Shipper | Mô tả chi tiết |
+|---|---|:---:|:---:|:---:|:---:|---|
+| AUTH-01 | Đăng ký tài khoản | ✔️ | — | — | — | Đăng ký bằng Email + Password. Hệ thống gửi mã OTP đến Email để xác thực (`OtpCodes.Type = VERIFY_EMAIL`). Tài khoản chỉ được kích hoạt sau khi verify OTP thành công. |
+| AUTH-02 | Đăng nhập | ✔️ | ✔️ | ✔️ | ✔️ | Đăng nhập bằng Email/Phone/Username + Password. Trả về Access Token (JWT) + Refresh Token. |
+| AUTH-03 | Làm mới Token | ✔️ | ✔️ | ✔️ | ✔️ | Sử dụng Refresh Token (`RefreshTokens`) để lấy Access Token mới khi hết hạn. |
+| AUTH-04 | Quên mật khẩu | ✔️ | ✔️ | ✔️ | ✔️ | Nhập Email → Hệ thống gửi OTP (`OtpCodes.Type = RESET_PASSWORD`) → Verify OTP → Cho phép đặt lại mật khẩu mới. |
+| AUTH-05 | Đổi mật khẩu | ✔️ | ✔️ | ✔️ | ✔️ | Nhập mật khẩu cũ + mật khẩu mới. Hệ thống gửi OTP xác thực trước khi cho phép thay đổi. |
+| AUTH-06 | Cập nhật hồ sơ cá nhân | ✔️ | ✔️ | ✔️ | ✔️ | Cập nhật: FullName, AvatarUrl, Phone, Gender, DateOfBirth. |
+| AUTH-07 | Quản lý địa chỉ giao hàng | ✔️ | — | — | — | CRUD sổ địa chỉ (`UserAddresses`). Hỗ trợ nhiều địa chỉ, đánh dấu IsDefault. Tích hợp Lat/Long cho Map. |
+| AUTH-08 | Quản lý phân quyền | — | — | ✔️ | — | Admin gán Role (Staff/Shipper) cho user. |
+| AUTH-09 | Khóa / Mở khóa tài khoản | — | — | ✔️ | — | Admin set `IsActive = false` cho tài khoản vi phạm. |
+| AUTH-10 | Xem danh sách người dùng | — | — | ✔️ | — | Admin xem, tìm kiếm, lọc toàn bộ Users theo Role, trạng thái. |
+
+### 3.2 Hồ sơ Số đo & Đặc thù Big Size (Body Profiles)
+*Đây là tính năng cốt lõi thể hiện tính đặc thù Big Size của dự án.*
+
+| Mã | Tên chức năng | Customer | Staff | Admin | Shipper | Mô tả chi tiết |
+|---|---|:---:|:---:|:---:|:---:|---|
+| BODY-01 | Tạo / Cập nhật hồ sơ số đo | ✔️ | — | — | — | Khách hàng nhập: Height, Weight, Bust, Waist, Hips, Arm, Thigh (cm). Mỗi user chỉ có 1 profile (`UserBodyProfiles.UserId` UNIQUE). |
+| BODY-02 | Chọn dáng người & sở thích | ✔️ | — | — | — | Chọn BodyShape (PEAR, APPLE, HOURGLASS, RECTANGLE, INVERTED_TRIANGLE) và FitPreference (Tight, Regular, Loose). |
+| BODY-03 | Xem hồ sơ số đo (read-only) | — | ✔️ | ✔️ | — | Staff/Admin xem thông tin số đo của khách hàng để phục vụ hỗ trợ. |
+
+### 3.3 Quản lý Sản phẩm & Danh mục (Product Management)
+
+| Mã | Tên chức năng | Customer | Staff | Admin | Shipper | Mô tả chi tiết |
+|---|---|:---:|:---:|:---:|:---:|---|
+| PROD-01 | Xem danh sách sản phẩm | ✔️ | ✔️ | ✔️ | — | Xem tất cả sản phẩm `IsActive = true, IsDeleted = false`. Hỗ trợ phân trang, tìm kiếm theo tên, lọc theo Category, Gender, khoảng giá, Tags. |
+| PROD-02 | Xem chi tiết sản phẩm | ✔️ | ✔️ | ✔️ | — | Hiển thị đầy đủ: mô tả, chất liệu, hướng dẫn bảo quản, hình ảnh, biến thể (size/màu/giá/tồn kho), bảng size guide, đánh giá. Tự động tăng `ViewCount`. |
+| PROD-03 | CRUD Danh mục | — | — | ✔️ | — | Quản lý `Categories`: tên, slug, mô tả, hình ảnh, danh mục cha (ParentId), thứ tự sắp xếp, trạng thái. |
+| PROD-04 | CRUD Sản phẩm | — | ✔️ | ✔️ | — | Quản lý `Products`: thông tin cơ bản, Gender (Nam/Nữ/Unisex), BrandName, Tags big size (Giấu bụng, Co giãn x4,...), giá gốc, giá sale, sản phẩm nổi bật. Xóa mềm (IsDeleted). |
+| PROD-05 | Quản lý biến thể | — | ✔️ | ✔️ | — | Quản lý `ProductVariants`: SKU, Size (L→5XL), Color, số lượng tồn kho, phụ phí cho size cực lớn (PriceAdjustment). |
+| PROD-06 | Quản lý bảng Size Guide | — | ✔️ | ✔️ | — | Nhập `SizeGuides` cho từng size: khoảng số đo cơ thể phù hợp (Min/Max Bust, Waist, Hips, Weight) + thông số đo thực tế trên sản phẩm (ChestCm, WaistCm, HipCm, ShoulderCm, LengthCm, SleeveCm). Data này phục vụ AI Fit-Check. |
+| PROD-07 | Quản lý hình ảnh sản phẩm | — | ✔️ | ✔️ | — | Upload/xóa `ProductImages` qua Cloudinary. Đánh dấu ảnh chính (IsPrimary), sắp xếp thứ tự (SortOrder). |
+| PROD-08 | Lọc sản phẩm theo số đo | ✔️ | — | — | — | Khách hàng lọc danh sách chỉ hiển thị sản phẩm có size vừa với Body Profile. Hệ thống so khớp `UserBodyProfiles` với `SizeGuides`. |
+
+### 3.4 Giỏ hàng & Sản phẩm yêu thích (Cart & Wishlist)
+
+| Mã | Tên chức năng | Customer | Staff | Admin | Shipper | Mô tả chi tiết |
+|---|---|:---:|:---:|:---:|:---:|---|
+| CART-01 | Thêm sản phẩm vào giỏ | ✔️ | — | — | — | Thêm `ProductVariantId` + Quantity vào `CartItems`. Nếu variant đã tồn tại thì cộng dồn số lượng. Kiểm tra tồn kho trước khi thêm. |
+| CART-02 | Xem giỏ hàng | ✔️ | — | — | — | Hiển thị danh sách CartItems kèm thông tin sản phẩm, size, màu, giá (Price + PriceAdjustment), tổng tiền. |
+| CART-03 | Cập nhật số lượng | ✔️ | — | — | — | Thay đổi Quantity của CartItem. Kiểm tra không vượt quá StockQuantity. |
+| CART-04 | Xóa sản phẩm khỏi giỏ | ✔️ | — | — | — | Xóa 1 hoặc nhiều CartItem. |
+| WISH-01 | Thêm / Xóa yêu thích | ✔️ | — | — | — | Toggle yêu thích sản phẩm (`Wishlists`). Mỗi cặp UserId + ProductId là duy nhất. |
+| WISH-02 | Xem danh sách yêu thích | ✔️ | — | — | — | Hiển thị danh sách sản phẩm đã yêu thích kèm trạng thái giá, tồn kho. |
+
+### 3.5 Đặt hàng & Thanh toán (Checkout & Payment)
+
+| Mã | Tên chức năng | Customer | Staff | Admin | Shipper | Mô tả chi tiết |
+|---|---|:---:|:---:|:---:|:---:|---|
+| CHK-01 | Tạo đơn hàng (Checkout) | ✔️ | — | — | — | Chốt đơn từ CartItems → tạo `Orders` + `OrderItems` (snapshot thông tin SP tại thời điểm mua). Tính: Subtotal, ShippingFee, Discount, Total. Snapshot địa chỉ giao hàng (kèm Lat/Long). Xóa CartItems sau khi tạo đơn thành công. |
+| CHK-02 | Áp dụng mã giảm giá | ✔️ | — | — | — | Nhập code → kiểm tra `Vouchers`: IsActive, thời hạn (StartDate ≤ now ≤ EndDate), MinOrderAmount, UsageLimit > UsedCount. Tính Discount dựa trên DiscountType (PERCENTAGE / FIXED_AMOUNT) với giới hạn MaxDiscountAmount. |
+| CHK-03 | Kiểm tra tồn kho (OOS Alert) | ✔️ | — | — | — | Chặn checkout nếu StockQuantity của bất kỳ variant nào không đủ. Hiển thị thông báo cụ thể sản phẩm nào hết hàng. |
+| CHK-04 | Trừ tồn kho | Hệ thống | — | — | — | Sau checkout thành công, giảm `ProductVariants.StockQuantity` tương ứng, tăng `Products.SoldCount`. |
+| PAY-01 | Thanh toán COD | ✔️ | — | — | — | Chọn phương thức COD → tạo `Payments` với PaymentMethod = 'COD', Status = 'PENDING'. Thanh toán khi nhận hàng. |
+| PAY-02 | Thanh toán SePay | ✔️ | — | — | — | Chọn phương thức SEPAY → gọi SePay API tạo giao dịch → redirect / QR code → nhận callback webhook cập nhật `Payments.Status = 'COMPLETED'`, lưu TransactionId, PaymentData (JSONB). |
+| PAY-03 | Webhook SePay | Hệ thống | — | — | — | Endpoint nhận callback từ SePay khi thanh toán thành công/thất bại. Verify checksum, cập nhật Payments.Status, gửi Notification cho Customer. |
+
+### 3.6 Quản lý Đơn hàng (Order Management)
+
+| Mã | Tên chức năng | Customer | Staff | Admin | Shipper | Mô tả chi tiết |
+|---|---|:---:|:---:|:---:|:---:|---|
+| ORD-01 | Xem lịch sử đơn hàng cá nhân | ✔️ | — | — | — | Xem danh sách đơn của mình, lọc theo Status. Xem chi tiết: OrderItems, trạng thái thanh toán, timeline (CreatedAt → ConfirmedAt → ShippedAt → DeliveredAt). |
+| ORD-02 | Xem đơn hàng hệ thống | — | ✔️ | ✔️ | — | Xem tất cả đơn. Tìm kiếm theo OrderCode, Phone, Status. Lọc theo ngày, trạng thái. |
+| ORD-03 | Xác nhận đơn hàng | — | ✔️ | ✔️ | — | PENDING → CONFIRMED. Cập nhật `ConfirmedAt`. Gửi Notification cho Customer. |
+| ORD-04 | Giao đơn cho Shipper | — | ✔️ | ✔️ | — | CONFIRMED → PROCESSING. Gán `ShipperId` vào Orders. Gửi Notification cho Shipper. |
+| ORD-05 | Bắt đầu giao hàng | — | — | — | ✔️ | PROCESSING → SHIPPING. Shipper xác nhận đã lấy hàng. Cập nhật `ShippedAt`. Gửi Notification cho Customer. |
+| ORD-06 | Xác nhận giao thành công | — | — | — | ✔️ | SHIPPING → DELIVERED. Cập nhật `DeliveredAt`. Nếu COD → cập nhật Payments.Status = 'COMPLETED'. Gửi Notification cho Customer. |
+| ORD-07 | Hủy đơn hàng (Customer) | ✔️ | — | — | — | Chỉ được hủy khi Status = 'PENDING'. Cập nhật Status = 'CANCELLED', ghi CancelReason, CancelledAt. Hoàn trả StockQuantity. Nếu đã thanh toán SePay → đánh dấu Payments.Status = 'REFUND_PENDING'. |
+| ORD-08 | Hủy đơn hàng (Staff/Admin) | — | ✔️ | ✔️ | — | Staff/Admin có thể hủy khi Status chưa DELIVERED. Ghi CancelReason. Hoàn trả StockQuantity + xử lý hoàn tiền nếu cần. |
+| ORD-09 | Giao hàng thất bại | — | — | — | ✔️ | Shipper báo giao thất bại → tăng `DeliveryAttempts` (+1). Nếu DeliveryAttempts >= 3 → tự động CANCELLED. Ghi CancelReason. |
+| ORD-10 | Xem đơn hàng được giao | — | — | — | ✔️ | Shipper xem danh sách đơn hàng được gán cho mình, lọc theo Status. |
+
+**Luồng trạng thái đơn hàng:**
+```
+PENDING → CONFIRMED → PROCESSING → SHIPPING → DELIVERED
+   ↓          ↓            ↓           ↓
+CANCELLED  CANCELLED   CANCELLED   CANCELLED (nếu giao thất bại 3 lần)
+```
+
+### 3.7 Giao hàng & Map Tracking (Shipping & Real-time Tracking)
+*Tính năng kỹ thuật đặc biệt: Theo dõi đơn hàng real-time trên bản đồ.*
+
+| Mã | Tên chức năng | Customer | Staff | Admin | Shipper | Mô tả chi tiết |
+|---|---|:---:|:---:|:---:|:---:|---|
+| MAP-01 | Cập nhật vị trí GPS | — | — | — | ✔️ | App Shipper gửi tọa độ GPS lên server định kỳ (mỗi 10-15 giây) khi đang giao hàng. Lưu vào `ShipperLocations`: Latitude, Longitude, Accuracy, Speed, Heading. |
+| MAP-02 | Theo dõi Shipper trên Map | ✔️ | — | — | — | Customer xem vị trí Shipper real-time trên Google Maps khi đơn ở trạng thái SHIPPING. Hiển thị: vị trí shipper, điểm đến (shipping address), tốc độ di chuyển. |
+| MAP-03 | Xem lịch trình giao hàng | ✔️ | ✔️ | ✔️ | ✔️ | Hiển thị timeline đơn hàng: thời gian tạo → xác nhận → giao → nhận. Kèm tọa độ các điểm GPS đã lưu. |
+
+### 3.8 Chat AI Tư vấn Size (AI Size Consultation)
+*Tính năng kỹ thuật đặc biệt: AI hỗ trợ tư vấn chọn sản phẩm và size.*
+
+| Mã | Tên chức năng | Customer | Staff | Admin | Shipper | Mô tả chi tiết |
+|---|---|:---:|:---:|:---:|:---:|---|
+| AI-01 | Chat với AI tư vấn | ✔️ | — | — | — | Khách hàng nhắn tin mô tả nhu cầu → AI phân tích `UserBodyProfiles` + `SizeGuides` + `Products` → gợi ý sản phẩm phù hợp với size và dáng người. Lưu hội thoại vào `ChatAiHistory` (Role: user/assistant). |
+| AI-02 | Gợi ý Size tự động | ✔️ | — | — | — | Tại trang chi tiết sản phẩm, hệ thống tự động so khớp Body Profile với SizeGuides → hiển thị "Size khuyên dùng: 2XL" kèm mức độ phù hợp. Thuật toán: so Min/Max (Bust, Waist, Hips, Weight) với số đo khách. |
+| AI-03 | Gợi ý sản phẩm theo dáng người | ✔️ | — | — | — | AI gợi ý sản phẩm dựa trên BodyShape + FitPreference + Gender. VD: Dáng PEAR → gợi ý áo form rộng vai, quần ống suông. Kết quả lưu `SuggestedProductIds` trong ChatAiHistory. |
+| AI-04 | Quản lý phiên chat AI | ✔️ | — | — | — | Mỗi cuộc hội thoại có `SessionId` riêng. Khách có thể xem lại lịch sử các phiên tư vấn trước. |
+| AI-05 | Xem lịch sử chat AI | — | — | ✔️ | — | Admin xem thống kê lịch sử chat AI: số phiên, sản phẩm được gợi ý nhiều nhất. |
+
+### 3.9 Đánh giá Sản phẩm (Product Reviews)
+
+| Mã | Tên chức năng | Customer | Staff | Admin | Shipper | Mô tả chi tiết |
+|---|---|:---:|:---:|:---:|:---:|---|
+| REV-01 | Viết đánh giá | ✔️ | — | — | — | Đánh giá 1-5 sao, viết bình luận, upload 1 ảnh review (`ReviewImageUrl`). Mỗi cặp ProductId + UserId chỉ được đánh giá 1 lần. Liên kết OrderId. |
+| REV-02 | Chia sẻ thông số cơ thể | ✔️ | — | — | — | Khi review, khách chọn chia sẻ HeightCm, WeightKg, SizeOrdered (`ShowBodyInfo = true`) để người mua khác tham khảo. Đây là tính năng đặc thù Big Size. |
+| REV-03 | Xem đánh giá sản phẩm | ✔️ | ✔️ | ✔️ | — | Hiển thị danh sách review kèm thông số người đánh giá (nếu ShowBodyInfo = true). Lọc theo Rating. Hệ thống tự cập nhật `Products.AverageRating` và `TotalReviews`. |
+| REV-04 | Xóa đánh giá vi phạm | — | — | ✔️ | — | Admin xóa review vi phạm ngôn từ, spam. |
+
+### 3.10 Quản lý Mã giảm giá (Voucher Management)
+
+| Mã | Tên chức năng | Customer | Staff | Admin | Shipper | Mô tả chi tiết |
+|---|---|:---:|:---:|:---:|:---:|---|
+| VCH-01 | CRUD Voucher | — | — | ✔️ | — | Tạo mã giảm giá (`Vouchers`): Code, DiscountType (PERCENTAGE/FIXED_AMOUNT), DiscountValue, MinOrderAmount, MaxDiscountAmount, StartDate, EndDate, UsageLimit. |
+| VCH-02 | Xem danh sách voucher | ✔️ | — | ✔️ | — | Customer xem voucher đang active và còn hạn. Admin xem tất cả + thống kê UsedCount. |
+| VCH-03 | Kiểm tra voucher hợp lệ | ✔️ | — | — | — | Nhập Code → kiểm tra: IsActive, StartDate ≤ now ≤ EndDate, UsedCount < UsageLimit, Subtotal ≥ MinOrderAmount. Trả về số tiền được giảm. |
+
+### 3.11 Thông báo (Notifications)
+
+| Mã | Tên chức năng | Customer | Staff | Admin | Shipper | Mô tả chi tiết |
+|---|---|:---:|:---:|:---:|:---:|---|
+| NOTI-01 | Nhận thông báo | ✔️ | ✔️ | ✔️ | ✔️ | Nhận notification khi: đơn hàng thay đổi trạng thái (ORDER), thanh toán (PAYMENT), giao hàng (SHIPPING), khuyến mãi (PROMOTION), hệ thống (SYSTEM). Lưu vào `Notifications`. |
+| NOTI-02 | Xem danh sách thông báo | ✔️ | ✔️ | ✔️ | ✔️ | Hiển thị danh sách thông báo, sắp xếp mới nhất, phân biệt đã đọc/chưa đọc (IsRead). Hỗ trợ Data JSONB điều hướng đến màn hình cụ thể. |
+| NOTI-03 | Đánh dấu đã đọc | ✔️ | ✔️ | ✔️ | ✔️ | Đánh dấu 1 hoặc tất cả thông báo là đã đọc (`IsRead = true`). |
+| NOTI-04 | Gửi thông báo hàng loạt | — | — | ✔️ | — | Admin tạo notification PROMOTION / SYSTEM gửi đến tất cả Customer. |
+
+---
+
+## 4. Quy trình Nghiệp vụ Nổi bật (Core Workflows)
+
+### 4.1 Quy trình Mua hàng với AI Gợi ý Size (Big Size Shopping Flow)
+
+```
+Customer                          Hệ thống                         AI Engine
+   │                                 │                                 │
+   ├──① Đăng ký + Verify OTP────────►│                                 │
+   │                                 │                                 │
+   ├──② Nhập Body Profile ──────────►│  Lưu UserBodyProfiles           │
+   │   (165cm, 85kg, Eo 90cm,       │                                 │
+   │    Dáng PEAR, Thích Loose)      │                                 │
+   │                                 │                                 │
+   ├──③ Xem chi tiết sản phẩm ─────►│                                 │
+   │   "Đầm suông Big Size"         │                                 │
+   │                                 ├──④ So khớp Profile ↔ SizeGuide─►│
+   │                                 │                                 │
+   │◄── ⑤ Gợi ý: Size 2XL ─────────┤◄── Kết quả Fit-Check ──────────┤
+   │       (phù hợp 92%)            │                                 │
+   │                                 │                                 │
+   ├──⑥ Add to Cart size 2XL ──────►│  Lưu CartItems                  │
+   │                                 │                                 │
+   ├──⑦ Checkout + SePay ──────────►│  Tạo Orders + OrderItems        │
+   │                                 │  Gọi SePay API                  │
+   │                                 │  Trừ StockQuantity              │
+   │                                 │                                 │
+   ├──⑧ Nhận hàng ──────────────────┤                                 │
+   │                                 │                                 │
+   ├──⑨ Review: 5 sao ─────────────►│  Lưu ProductReviews             │
+   │   "Size vừa đẹp!"              │  Cập nhật AverageRating         │
+   │   (ShowBodyInfo = true)         │                                 │
+   │                                 │                                 │
+   └──⑩ Chat AI: "Gợi ý thêm" ────►│──── Gửi prompt + Profile ──────►│
+                                     │◄─── Gợi ý sản phẩm tương tự ──┤
+                                     │  Lưu ChatAiHistory              │
+```
+
+### 4.2 Quy trình Xử lý Đơn hàng (Order Processing Flow)
+
+```
+Customer              Staff                  Shipper              Hệ thống
+   │                    │                       │                    │
+   ├─① Checkout────────►│                       │                    │
+   │  Status: PENDING   │                       │                    │
+   │                    │                       │                    │
+   │                    ├─② Xác nhận───────────►│                    │
+   │                    │  Status: CONFIRMED    │                    │
+   │◄── Notification ──┤                       │                    │
+   │                    │                       │                    │
+   │                    ├─③ Gán Shipper─────────►│                    │
+   │                    │  Status: PROCESSING   │                    │
+   │                    │                       │◄── Notification ──┤
+   │                    │                       │                    │
+   │                    │                       ├─④ Lấy hàng────────►│
+   │                    │                       │  Status: SHIPPING  │
+   │◄── Notification ──┤                       │                    │
+   │                    │                       │                    │
+   │  ⑤ Xem Map ──────►│                       ├─ GPS cập nhật ────►│
+   │◄── Vị trí Shipper─┤                       │  (mỗi 10-15s)     │
+   │                    │                       │                    │
+   │                    │                       ├─⑥ Giao thành công─►│
+   │                    │                       │  Status: DELIVERED │
+   │◄── Notification ──┤                       │                    │
+```
+
+### 4.3 Quy trình Bảo mật OTP (OTP Verification Flow)
+
+```
+[Đăng ký tài khoản]
+Customer nhập Email + Password
+   → Hệ thống tạo User (IsEmailVerified = false)
+   → Sinh OTP 6 số, lưu OtpCodes (Type = VERIFY_EMAIL, ExpiredAt = +5 phút)
+   → Gửi OTP đến Email qua SMTP
+   → Customer nhập OTP
+   → Hệ thống kiểm tra: Code khớp, chưa hết hạn, IsUsed = false
+   → Thành công: IsEmailVerified = true, IsUsed = true
+   → Thất bại: Cho phép gửi lại OTP (tối đa 3 lần)
+
+[Đổi mật khẩu]
+Customer nhập mật khẩu cũ (verify BCrypt)
+   → Hệ thống sinh OTP, gửi Email (Type = RESET_PASSWORD)
+   → Customer verify OTP
+   → Cho phép nhập mật khẩu mới
+   → Hash BCrypt → cập nhật Users.Password
+```
+
+### 4.4 Quy trình Thanh toán SePay (SePay Payment Flow)
+
+```
+Customer chọn thanh toán SePay
+   → Backend gọi SePay API tạo giao dịch (Amount, OrderCode)
+   → SePay trả về URL thanh toán / QR Code
+   → Customer hoàn tất thanh toán trên SePay
+   → SePay gọi Webhook callback về Backend
+   → Backend verify checksum + Amount
+   → Cập nhật Payments: Status = COMPLETED, TransactionId, PaidAt
+   → Gửi Notification cho Customer: "Thanh toán thành công"
+
+[Thất bại / Hết hạn]
+   → SePay callback: Status = FAILED
+   → Backend cập nhật Payments.Status = FAILED
+   → Gửi Notification cho Customer: "Thanh toán thất bại"
+
+[Hoàn tiền khi hủy đơn]
+   → Đơn hàng đã thanh toán SePay bị hủy
+   → Backend cập nhật Payments.Status = REFUND_PENDING
+   → Staff xử lý hoàn tiền thủ công hoặc qua SePay API
+```
+
+---
+
+## 5. Yêu cầu Phi chức năng (Non-Functional Requirements)
+
+### 5.1 Hiệu năng (Performance)
+- Thời gian response API trung bình < 500ms.
+- Thuật toán gợi ý size AI phản hồi < 1.0 giây.
+- Cập nhật GPS shipper real-time với độ trễ < 3 giây.
+- Database được tối ưu Index trên các bảng truy vấn thường xuyên (Products, Orders, ProductVariants).
+
+### 5.2 Bảo mật (Security)
+- Mật khẩu mã hóa **BCrypt** (cost factor ≥ 11).
+- Xác thực API bằng **JWT** (Access Token: 15 phút, Refresh Token: 7 ngày).
+- OTP có thời hạn **5 phút**, tối đa **3 lần** gửi lại mỗi email.
+- Webhook SePay bắt buộc **verify checksum** để chống giả mạo.
+- Tất cả API bảo vệ bằng **Authorization middleware** phân quyền theo Role.
+- Chống SQL Injection qua Entity Framework Core (parameterized queries).
+
+### 5.3 Khả năng mở rộng (Scalability)
+- Database PostgreSQL với cấu trúc rõ ràng, phân biệt bảng tĩnh (Products, Categories) và bảng transaction (Orders, Payments).
+- Sử dụng **Soft Delete** (IsDeleted) cho Products để bảo toàn dữ liệu liên kết.
+- ShipperLocations thiết kế append-only, hỗ trợ truy vấn nhanh theo CreatedAt DESC.
+
+### 5.4 Trải nghiệm người dùng (UX/UI)
+- Giao diện mobile-first, tối ưu cho thiết bị Android.
+- Buttons và font chữ **to, rõ ràng**, dễ thao tác.
+- **Ngôn ngữ tích cực**, không dùng ngôn từ gây miệt thị ngoại cỡ (body-shaming). Sử dụng: "Tự tin với phong cách của bạn", "Thoải mái trong mọi kích cỡ", thay vì "béo", "mập",...
+- Hiển thị thông số size dưới dạng **trực quan** (biểu đồ, hình minh họa) thay vì chỉ số thuần.
+
+### 5.5 Độ tin cậy (Reliability)
+- Đảm bảo tính toàn vẹn dữ liệu: Foreign Keys, CHECK constraints, UNIQUE constraints.
+- Snapshot thông tin sản phẩm vào OrderItems tại thời điểm mua (không bị ảnh hưởng khi sản phẩm thay đổi sau đó).
+- Snapshot địa chỉ giao hàng vào Orders (không bị ảnh hưởng khi khách sửa UserAddresses).
+
+---
+
+## 6. Mapping Chức năng ↔ Database
+
+| Module | Bảng Database sử dụng |
+|---|---|
+| AUTH (Xác thực) | Users, OtpCodes, RefreshTokens |
+| BODY (Hồ sơ số đo) | UserBodyProfiles |
+| PRODUCT (Sản phẩm) | Categories, Products, ProductVariants, SizeGuides, ProductImages |
+| CART & WISHLIST | CartItems, Wishlists |
+| ORDER (Đơn hàng) | Orders, OrderItems, Vouchers |
+| PAYMENT (Thanh toán) | Payments |
+| SHIPPING & MAP | ShipperLocations, Orders (Lat/Long + Timestamps) |
+| REVIEW (Đánh giá) | ProductReviews |
+| AI CHAT (Tư vấn) | ChatAiHistory, UserBodyProfiles, SizeGuides |
+| NOTIFICATION | Notifications |
+| ADDRESS | UserAddresses |
+
+**Tổng: 20 bảng | Phục vụ 11 modules chức năng**
+
+---
+
+## 7. Phụ lục (Appendix)
+
+### 7.1 Danh sách Enum / Giá trị cố định
+
+| Trường | Giá trị hợp lệ |
+|---|---|
+| Users.Role | 1 (Admin), 2 (Staff), 3 (Customer), 4 (Shipper) |
+| Users.Gender | MALE, FEMALE, OTHER |
+| Products.Gender | MALE, FEMALE, UNISEX |
+| UserBodyProfiles.BodyShape | PEAR, APPLE, HOURGLASS, RECTANGLE, INVERTED_TRIANGLE |
+| UserBodyProfiles.FitPreference | Tight, Regular, Loose |
+| ProductVariants.Size | L, XL, 2XL, 3XL, 4XL, 5XL |
+| OtpCodes.Type | VERIFY_EMAIL, RESET_PASSWORD |
+| Orders.Status | PENDING, CONFIRMED, PROCESSING, SHIPPING, DELIVERED, CANCELLED |
+| Payments.PaymentMethod | COD, SEPAY |
+| Payments.Status | PENDING, COMPLETED, FAILED, REFUND_PENDING |
+| Vouchers.DiscountType | PERCENTAGE, FIXED_AMOUNT |
+| Notifications.Type | ORDER, PAYMENT, SHIPPING, SYSTEM, PROMOTION |
+| ChatAiHistory.Role | user, assistant |
+
+### 7.2 Quy tắc nghiệp vụ quan trọng (Business Rules)
+
+| # | Quy tắc |
+|---|---|
+| BR-01 | Customer chỉ được hủy đơn khi Status = PENDING. |
+| BR-02 | Mỗi User chỉ có 1 UserBodyProfile (UNIQUE UserId). |
+| BR-03 | Mỗi cặp ProductId + UserId chỉ được review 1 lần. |
+| BR-04 | Mỗi cặp UserId + ProductVariantId chỉ có 1 CartItem (cộng dồn Quantity). |
+| BR-05 | StockQuantity không được âm (CHECK >= 0). Chặn checkout nếu không đủ. |
+| BR-06 | OTP hết hạn sau 5 phút. Tối đa 3 lần gửi lại. |
+| BR-07 | Voucher chỉ áp dụng khi: IsActive = true, trong thời hạn, UsedCount < UsageLimit, Subtotal >= MinOrderAmount. |
+| BR-08 | Giao hàng thất bại tối đa 3 lần (DeliveryAttempts). Quá 3 lần → tự động CANCELLED. |
+| BR-09 | OrderItems lưu snapshot (ProductName, Price, Size, Color) → không bị ảnh hưởng khi Products thay đổi. |
+| BR-10 | PriceAdjustment cộng thêm vào giá cho size cực lớn (4XL, 5XL). Giá cuối = Product.Price (hoặc SalePrice) + PriceAdjustment. |
+
+---
+
+*Tài liệu SRS phiên bản 2.0 — Đồng bộ với Database 20 bảng PostgreSQL*
+*Dự án: Big Size Fashion App | Final Project Mobile Application*
