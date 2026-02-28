@@ -51,19 +51,8 @@ namespace MV.ApplicationLayer.Services
                 chatHistory = await _chatRepository.GetBySessionIdAsync(sessionId, userId);
             }
 
-            // 4. Query suitable products with size guides
-            var productsWithGuides = await _context.Products
-                .Include(p => p.SizeGuides)
-                .Include(p => p.ProductImages)
-                .Include(p => p.ProductVariants)
-                .Where(p => p.IsActive == true && p.IsDeleted != true)
-                .Where(p => p.SizeGuides.Any())
-                .Where(p => p.ProductVariants.Any(v => (v.StockQuantity ?? 0) > 0))
-                .Take(20)
-                .ToListAsync();
-
-            // 5. Build AI prompt
-            var systemPrompt = BuildSystemPrompt(bodyProfile, productsWithGuides);
+            // 4. Build enriched AI context (queries products, categories, reviews from DB)
+            var (systemPrompt, productsWithGuides) = await BuildEnrichedContextAsync(bodyProfile);
 
             // 6. Build conversation messages for Gemini
             var conversationParts = new List<object>();
@@ -224,43 +213,201 @@ namespace MV.ApplicationLayer.Services
 
         #region Helpers
 
-        private string BuildSystemPrompt(UserBodyProfile? bodyProfile, List<Product> products)
+        private async Task<(string prompt, List<Product> products)> BuildEnrichedContextAsync(
+            UserBodyProfile? bodyProfile)
         {
+            // ========== QUERY ENRICHED DATA FROM DATABASE ==========
+
+            // 1. Load categories
+            var categories = await _context.Categories
+                .Where(c => c.IsActive == true)
+                .OrderBy(c => c.SortOrder)
+                .ThenBy(c => c.Name)
+                .ToListAsync();
+
+            // 2. Load products with full details (Category, SizeGuides, Variants, Images)
+            var products = await _context.Products
+                .Include(p => p.Category)
+                .Include(p => p.SizeGuides)
+                .Include(p => p.ProductVariants.Where(v => v.IsActive == true))
+                .Include(p => p.ProductImages.Where(img => img.IsPrimary == true))
+                .Where(p => p.IsActive == true && p.IsDeleted != true)
+                .Where(p => p.ProductVariants.Any(v => (v.StockQuantity ?? 0) > 0))
+                .OrderByDescending(p => p.IsFeatured)
+                .ThenByDescending(p => p.SoldCount)
+                .Take(30)
+                .ToListAsync();
+
+            // 3. Load review insights (from buyers with body info for size reference)
+            var productIds = products.Select(p => p.Id).ToList();
+            var reviewInsights = await _context.ProductReviews
+                .Where(r => productIds.Contains(r.ProductId))
+                .Where(r => r.ShowBodyInfo == true && r.HeightCm.HasValue && r.WeightKg.HasValue)
+                .OrderByDescending(r => r.Rating)
+                .Take(20)
+                .ToListAsync();
+
+            // ========== BUILD FINE-TUNED SYSTEM PROMPT ==========
+
             var sb = new StringBuilder();
-            sb.AppendLine("Ban la chuyen gia tu van thoi trang Big Size tai Viet Nam.");
-            sb.AppendLine("Nhiem vu: Tu van chon san pham va size phu hop voi so do khach hang.");
-            sb.AppendLine("Phong cach: Than thien, tu tin, khong dung tu miet thi ngoai co.");
-            sb.AppendLine("Luon tra loi bang tieng Viet.");
-            sb.AppendLine("Khi goi y san pham, hay de cap ten san pham CHINH XAC nhu trong danh sach.");
+
+            // === AI PERSONA ===
+            sb.AppendLine("=== VAI TRO ===");
+            sb.AppendLine("Ban la 'BigSize Fashion AI' - chuyen gia tu van thoi trang cho nguoi mac size lon tai Viet Nam.");
+            sb.AppendLine("Ten thuong hieu: BigSize Fashion.");
+            sb.AppendLine("Slogan: 'Your Style, Your Confidence' - Phong cach cua ban, Su tu tin cua ban.");
             sb.AppendLine();
 
+            // === BEHAVIOR RULES ===
+            sb.AppendLine("=== QUY TAC GIAO TIEP ===");
+            sb.AppendLine("1. Xung ho 'minh' va goi khach 'ban' de tao cam giac than thien, gan gui.");
+            sb.AppendLine("2. TUYET DOI khong dung tu miet thi ngoai co (map, beo, to con...). Thay vao do dung: 'dang nguoi day dan', 'voc dang khoe manh', 'phom nguoi thoai mai'.");
+            sb.AppendLine("3. Luon tu tin, tich cuc va dong vien khach hang. Moi dang nguoi deu dep!");
+            sb.AppendLine("4. Tra loi bang tieng Viet, ngan gon, de hieu, co cam xuc.");
+            sb.AppendLine("5. Khi goi y san pham, LUON ghi ro [ID:X] (X la ma san pham) de he thong nhan dien duoc.");
+            sb.AppendLine("6. Luon de cap gia ban. Neu co giam gia, ghi ca gia goc va gia khuyen mai.");
+            sb.AppendLine("7. Khi tu van size, dua tren BANG SIZE CU THE cua tung san pham, khong doan mo.");
+            sb.AppendLine("8. Neu khach chua co so do, hay hoi: chieu cao, can nang, vong nguc, vong eo, vong hong.");
+            sb.AppendLine("9. Co the goi y phoi do (ao + quan, phu kien...) neu phu hop voi nhu cau khach.");
+            sb.AppendLine("10. Toi da goi y 3-5 san pham moi lan, uu tien san pham phu hop nhat.");
+            sb.AppendLine("11. Khi khach hoi ve chat lieu, cam giac mac, hay mo ta chi tiet dua tren thong tin san pham.");
+            sb.AppendLine("12. Neu khong co san pham phu hop, hay trung thuc thong bao va goi y khach cho dot hang moi.");
+            sb.AppendLine();
+
+            // === USER BODY PROFILE ===
+            sb.AppendLine("=== THONG TIN KHACH HANG ===");
             if (bodyProfile != null)
             {
-                sb.AppendLine("THONG TIN KHACH HANG:");
                 if (bodyProfile.Height.HasValue) sb.AppendLine($"- Chieu cao: {bodyProfile.Height}cm");
                 if (bodyProfile.Weight.HasValue) sb.AppendLine($"- Can nang: {bodyProfile.Weight}kg");
-                if (bodyProfile.Bust.HasValue) sb.AppendLine($"- Vong nguc: {bodyProfile.Bust}cm");
-                if (bodyProfile.Waist.HasValue) sb.AppendLine($"- Vong eo: {bodyProfile.Waist}cm");
-                if (bodyProfile.Hips.HasValue) sb.AppendLine($"- Vong hong: {bodyProfile.Hips}cm");
+                if (bodyProfile.Bust.HasValue) sb.AppendLine($"- Vong nguc (Bust): {bodyProfile.Bust}cm");
+                if (bodyProfile.Waist.HasValue) sb.AppendLine($"- Vong eo (Waist): {bodyProfile.Waist}cm");
+                if (bodyProfile.Hips.HasValue) sb.AppendLine($"- Vong hong (Hips): {bodyProfile.Hips}cm");
+                if (bodyProfile.Arm.HasValue) sb.AppendLine($"- Vong tay: {bodyProfile.Arm}cm");
+                if (bodyProfile.Thigh.HasValue) sb.AppendLine($"- Vong dui: {bodyProfile.Thigh}cm");
                 if (!string.IsNullOrEmpty(bodyProfile.BodyShape)) sb.AppendLine($"- Dang nguoi: {bodyProfile.BodyShape}");
-                if (!string.IsNullOrEmpty(bodyProfile.FitPreference)) sb.AppendLine($"- So thich: {bodyProfile.FitPreference}");
-                sb.AppendLine();
+                if (!string.IsNullOrEmpty(bodyProfile.FitPreference)) sb.AppendLine($"- Phong cach yeu thich: {bodyProfile.FitPreference}");
+                sb.AppendLine("=> Da co so do khach hang. Hay tu van size CU THE dua tren bang size san pham.");
             }
             else
             {
-                sb.AppendLine("KHACH HANG CHUA CO SO DO CO THE. Hay hoi khach hang ve chieu cao, can nang de tu van tot hon.");
+                sb.AppendLine("Khach hang CHUA cap nhat so do co the.");
+                sb.AppendLine("=> HAY HOI khach hang ve chieu cao, can nang va so do 3 vong de tu van chinh xac hon.");
+            }
+            sb.AppendLine();
+
+            // === CATEGORIES ===
+            if (categories.Any())
+            {
+                sb.AppendLine("=== DANH MUC SAN PHAM ===");
+                foreach (var cat in categories)
+                {
+                    var parentName = cat.ParentId.HasValue
+                        ? categories.FirstOrDefault(c => c.Id == cat.ParentId)?.Name
+                        : null;
+                    var parentInfo = parentName != null ? $" (thuoc nhom {parentName})" : "";
+                    sb.AppendLine($"- {cat.Name}{parentInfo}");
+                }
                 sb.AppendLine();
             }
 
-            sb.AppendLine("SAN PHAM CO SAN (co size phu hop):");
-            foreach (var p in products.Take(15))
+            // === PRODUCTS CATALOG ===
+            sb.AppendLine("=== CATALOG SAN PHAM (CON HANG) ===");
+            foreach (var p in products)
             {
-                var price = p.SalePrice.HasValue ? $"{p.SalePrice:N0}d (goc {p.Price:N0}d)" : $"{p.Price:N0}d";
-                var sizes = string.Join(", ", p.SizeGuides.Select(sg => sg.SizeName));
-                sb.AppendLine($"- [ID:{p.Id}] {p.Name} | Gia: {price} | Size: {sizes}");
+                // Price info
+                var price = p.SalePrice.HasValue && p.SalePrice < p.Price
+                    ? $"{p.SalePrice:N0}d (giam tu {p.Price:N0}d)"
+                    : $"{p.Price:N0}d";
+
+                sb.AppendLine($"--- [ID:{p.Id}] {p.Name} ---");
+                sb.AppendLine($"  Gia: {price}");
+                if (p.Category != null) sb.AppendLine($"  Danh muc: {p.Category.Name}");
+                if (!string.IsNullOrEmpty(p.Gender)) sb.AppendLine($"  Gioi tinh: {p.Gender}");
+                if (!string.IsNullOrEmpty(p.BrandName)) sb.AppendLine($"  Thuong hieu: {p.BrandName}");
+                if (!string.IsNullOrEmpty(p.Material)) sb.AppendLine($"  Chat lieu: {p.Material}");
+                if (!string.IsNullOrEmpty(p.Description)) sb.AppendLine($"  Mo ta: {p.Description}");
+                if (p.Tags != null && p.Tags.Any()) sb.AppendLine($"  Tags: {string.Join(", ", p.Tags)}");
+
+                // Rating & Sales
+                if (p.AverageRating.HasValue && p.TotalReviews.HasValue && p.TotalReviews > 0)
+                    sb.AppendLine($"  Danh gia: {p.AverageRating:F1}/5 ({p.TotalReviews} luot)");
+                if (p.SoldCount.HasValue && p.SoldCount > 0)
+                    sb.AppendLine($"  Da ban: {p.SoldCount} san pham");
+
+                // Available variants (color + size + stock)
+                var inStockVariants = p.ProductVariants.Where(v => (v.StockQuantity ?? 0) > 0).ToList();
+                if (inStockVariants.Any())
+                {
+                    var colorGroups = inStockVariants.GroupBy(v => v.Color);
+                    foreach (var cg in colorGroups)
+                    {
+                        var sizes = string.Join(", ", cg.Select(v => $"{v.Size}(con {v.StockQuantity})"));
+                        sb.AppendLine($"  Mau {cg.Key}: {sizes}");
+                    }
+                }
+
+                // Size guide details
+                if (p.SizeGuides.Any())
+                {
+                    sb.AppendLine($"  Bang size:");
+                    foreach (var sg in p.SizeGuides.OrderBy(s => s.SizeName))
+                    {
+                        var rangeParts = new List<string>();
+                        if (sg.MinWeight.HasValue && sg.MaxWeight.HasValue)
+                            rangeParts.Add($"Nang {sg.MinWeight}-{sg.MaxWeight}kg");
+                        if (sg.MinBust.HasValue && sg.MaxBust.HasValue)
+                            rangeParts.Add($"Nguc {sg.MinBust}-{sg.MaxBust}cm");
+                        if (sg.MinWaist.HasValue && sg.MaxWaist.HasValue)
+                            rangeParts.Add($"Eo {sg.MinWaist}-{sg.MaxWaist}cm");
+                        if (sg.MinHips.HasValue && sg.MaxHips.HasValue)
+                            rangeParts.Add($"Hong {sg.MinHips}-{sg.MaxHips}cm");
+
+                        var exactParts = new List<string>();
+                        if (sg.ChestCm.HasValue) exactParts.Add($"Nguc {sg.ChestCm}cm");
+                        if (sg.WaistCm.HasValue) exactParts.Add($"Eo {sg.WaistCm}cm");
+                        if (sg.HipCm.HasValue) exactParts.Add($"Hong {sg.HipCm}cm");
+                        if (sg.ShoulderCm.HasValue) exactParts.Add($"Vai {sg.ShoulderCm}cm");
+                        if (sg.LengthCm.HasValue) exactParts.Add($"Dai {sg.LengthCm}cm");
+                        if (sg.SleeveCm.HasValue) exactParts.Add($"Tay {sg.SleeveCm}cm");
+
+                        var rangeInfo = rangeParts.Any() ? string.Join(", ", rangeParts) : "";
+                        var exactInfo = exactParts.Any() ? $" | Do: {string.Join(", ", exactParts)}" : "";
+
+                        sb.AppendLine($"    Size {sg.SizeName}: {rangeInfo}{exactInfo}");
+                    }
+                }
+
+                sb.AppendLine();
             }
 
-            return sb.ToString();
+            // === REVIEW INSIGHTS ===
+            if (reviewInsights.Any())
+            {
+                sb.AppendLine("=== THAM KHAO TU KHACH HANG DA MUA ===");
+                foreach (var r in reviewInsights)
+                {
+                    var productName = products.FirstOrDefault(p => p.Id == r.ProductId)?.Name ?? "";
+                    sb.AppendLine($"- {productName} | Size {r.SizeOrdered} | Khach {r.HeightCm}cm/{r.WeightKg}kg | {r.Rating}/5 sao");
+                    if (!string.IsNullOrEmpty(r.Comment))
+                    {
+                        var shortComment = r.Comment.Length > 80 ? r.Comment[..80] + "..." : r.Comment;
+                        sb.AppendLine($"  Nhan xet: {shortComment}");
+                    }
+                }
+                sb.AppendLine();
+            }
+
+            // === SIZING TIPS ===
+            sb.AppendLine("=== HUONG DAN TU VAN SIZE ===");
+            sb.AppendLine("1. So sanh so do khach hang voi BANG SIZE CU THE cua tung san pham.");
+            sb.AppendLine("2. Neu khach o giua 2 size, khuyen chon size LON hon de thoai mai.");
+            sb.AppendLine("3. Voi khach thich mac rong (Loose Fit), khuyen len 1 size.");
+            sb.AppendLine("4. Voi khach thich mac om (Slim Fit), chon size vua khit so do.");
+            sb.AppendLine("5. Tham khao review cua khach da mua co so do tuong tu de tu van chinh xac hon.");
+            sb.AppendLine("6. Luon ghi chu: 'So do mang tinh tham khao, co the chenh lech 1-2cm tuy dang nguoi'.");
+
+            return (sb.ToString(), products);
         }
 
         private async Task<string> CallGeminiApiAsync(string systemPrompt, List<object> conversationParts)
