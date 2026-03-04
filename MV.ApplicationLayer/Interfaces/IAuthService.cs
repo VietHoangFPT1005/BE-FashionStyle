@@ -15,5 +15,8 @@ namespace MV.ApplicationLayer.ServiceInterfaces
         Task<ApiResponse<object>> ResetPasswordAsync(ResetPasswordRequest request);
         Task<ApiResponse<object>> ChangePasswordAsync(int userId, ChangePasswordRequest request);
         Task<ApiResponse<object>> LogoutAsync(int userId, LogoutRequest request);
+        Task<ApiResponse<LoginResponse>> GoogleLoginAsync(GoogleLoginRequest request);
+        string GetGoogleLoginUrl(string redirectUri);
+        Task<ApiResponse<LoginResponse>> GoogleCallbackAsync(string code, string redirectUri);
     }
 }

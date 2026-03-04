@@ -170,6 +170,64 @@ namespace MV.PresentationLayer.Controllers
         }
 
         /// <summary>
+        /// Login or register with Google account
+        /// </summary>
+        [HttpPost("google-login")]
+        [SwaggerOperation(Summary = "Login or register with Google account")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
+        public async Task<IActionResult> GoogleLogin([FromBody] GoogleLoginRequest request)
+        {
+            var result = await _authService.GoogleLoginAsync(request);
+            if (!result.Success)
+            {
+                if (result.Message != null && result.Message.Contains("deactivated"))
+                    return StatusCode(StatusCodes.Status403Forbidden, result);
+                return BadRequest(result);
+            }
+
+            return Ok(result);
+        }
+
+        /// <summary>
+        /// Redirect to Google login page (open in browser to test)
+        /// </summary>
+        [HttpGet("google-redirect")]
+        [SwaggerOperation(Summary = "Redirect to Google login page (open URL in browser)")]
+        [ProducesResponseType(StatusCodes.Status302Found)]
+        public IActionResult GoogleRedirect()
+        {
+            var redirectUri = $"{Request.Scheme}://{Request.Host}/api/auth/google-callback";
+            var googleLoginUrl = _authService.GetGoogleLoginUrl(redirectUri);
+            return Redirect(googleLoginUrl);
+        }
+
+        /// <summary>
+        /// Google OAuth callback - handles the response from Google after login
+        /// </summary>
+        [HttpGet("google-callback")]
+        [SwaggerOperation(Summary = "Google OAuth callback (auto-called by Google after login)")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        public async Task<IActionResult> GoogleCallback([FromQuery] string code, [FromQuery] string? error)
+        {
+            if (!string.IsNullOrEmpty(error))
+                return BadRequest(ApiResponse.ErrorResponse($"Google login was denied: {error}"));
+
+            if (string.IsNullOrEmpty(code))
+                return BadRequest(ApiResponse.ErrorResponse("Authorization code is missing."));
+
+            var redirectUri = $"{Request.Scheme}://{Request.Host}/api/auth/google-callback";
+            var result = await _authService.GoogleCallbackAsync(code, redirectUri);
+
+            if (!result.Success)
+                return BadRequest(result);
+
+            return Ok(result);
+        }
+
+        /// <summary>
         /// Logout and revoke refresh token
         /// </summary>
         [HttpPost("logout")]

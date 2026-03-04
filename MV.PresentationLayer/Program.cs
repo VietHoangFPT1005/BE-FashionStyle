@@ -26,7 +26,7 @@ namespace MV.PresentationLayer
             {
                 options.AddPolicy("AllowFrontend", policy =>
                 {
-                    policy.WithOrigins("http://localhost:3000", "http://localhost:5173")
+                    policy.WithOrigins("https://localhost:7159")
                         .AllowAnyMethod()
                         .AllowAnyHeader()
                         .AllowCredentials();
@@ -106,6 +106,7 @@ namespace MV.PresentationLayer
             builder.Services.Configure<SmtpSettings>(builder.Configuration.GetSection("SmtpSettings"));
             builder.Services.Configure<SePaySettings>(builder.Configuration.GetSection("SePay"));
             builder.Services.Configure<GeminiSettings>(builder.Configuration.GetSection("Gemini"));
+            builder.Services.Configure<GoogleSettings>(builder.Configuration.GetSection("Google"));
 
             // Register DbContext
             builder.Services.AddDbContext<FashionDbContext>(options =>

@@ -1,6 +1,9 @@
+using Google.Apis.Auth;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using MV.ApplicationLayer.ServiceInterfaces;
+using MV.DomainLayer.Configuration;
 using MV.DomainLayer.DTOs.Auth.Request;
 using MV.DomainLayer.DTOs.Auth.Response;
 using MV.DomainLayer.DTOs.Common;
@@ -9,6 +12,7 @@ using MV.InfrastructureLayer.Interfaces;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using System.Text.Json;
 
 namespace MV.ApplicationLayer.Services
 {
@@ -20,11 +24,14 @@ namespace MV.ApplicationLayer.Services
         private readonly IUserBodyProfileRepository _bodyProfileRepository;
         private readonly IEmailService _emailService;
         private readonly IConfiguration _configuration;
+        private readonly GoogleSettings _googleSettings;
+        private readonly IHttpClientFactory _httpClientFactory;
 
         private const int OTP_EXPIRY_MINUTES = 5;
         private const int OTP_RATE_LIMIT = 3;
         private const int OTP_RATE_WINDOW_MINUTES = 15;
         private const int REFRESH_TOKEN_EXPIRY_DAYS = 7;
+        private const string DEFAULT_AVATAR_URL = "https://antimatter.vn/wp-content/uploads/2022/11/anh-avatar-trang-tron.jpg";
 
         public AuthService(
             IUserRepository userRepository,
@@ -32,7 +39,9 @@ namespace MV.ApplicationLayer.Services
             IRefreshTokenRepository refreshTokenRepository,
             IUserBodyProfileRepository bodyProfileRepository,
             IEmailService emailService,
-            IConfiguration configuration)
+            IConfiguration configuration,
+            IOptions<GoogleSettings> googleSettings,
+            IHttpClientFactory httpClientFactory)
         {
             _userRepository = userRepository;
             _otpCodeRepository = otpCodeRepository;
@@ -40,6 +49,8 @@ namespace MV.ApplicationLayer.Services
             _bodyProfileRepository = bodyProfileRepository;
             _emailService = emailService;
             _configuration = configuration;
+            _googleSettings = googleSettings.Value;
+            _httpClientFactory = httpClientFactory;
         }
 
         // ==================== API 1: Register ====================
@@ -406,6 +417,162 @@ namespace MV.ApplicationLayer.Services
             return ApiResponse<object>.SuccessResponse(null, "Logged out successfully.");
         }
 
+        // ==================== API 10: Google Login ====================
+        public async Task<ApiResponse<LoginResponse>> GoogleLoginAsync(GoogleLoginRequest request)
+        {
+            // 1. Verify Google ID Token
+            GoogleJsonWebSignature.Payload payload;
+            try
+            {
+                var settings = new GoogleJsonWebSignature.ValidationSettings
+                {
+                    Audience = new[] { _googleSettings.ClientId }
+                };
+                payload = await GoogleJsonWebSignature.ValidateAsync(request.IdToken, settings);
+            }
+            catch (InvalidJwtException)
+            {
+                return ApiResponse<LoginResponse>.ErrorResponse("Invalid Google ID token.");
+            }
+
+            // 2. Extract info from Google payload
+            var email = payload.Email;
+            var fullName = payload.Name;
+            var avatarUrl = payload.Picture;
+            var googleId = payload.Subject; // Unique Google user ID
+
+            if (string.IsNullOrEmpty(email))
+                return ApiResponse<LoginResponse>.ErrorResponse("Google account does not have an email address.");
+
+            // 3. Check if user already exists by email
+            var user = await _userRepository.GetByEmailAsync(email);
+
+            if (user != null)
+            {
+                // Existing user - check if active
+                if (user.IsActive != true)
+                    return ApiResponse<LoginResponse>.ErrorResponse("Your account has been deactivated. Please contact support.");
+
+                // Auto-verify email if not yet verified (Google already verified it)
+                if (user.IsEmailVerified != true)
+                {
+                    user.IsEmailVerified = true;
+                    await _userRepository.UpdateAsync(user);
+                }
+
+                // Update avatar if user doesn't have one
+                if (string.IsNullOrEmpty(user.AvatarUrl))
+                {
+                    user.AvatarUrl = DEFAULT_AVATAR_URL;
+                    await _userRepository.UpdateAsync(user);
+                }
+            }
+            else
+            {
+                // 4. Create new user from Google info
+                var username = $"google_{googleId}";
+
+                // Generate a random password hash (user will never use password login)
+                var randomPassword = BCrypt.Net.BCrypt.HashPassword(Guid.NewGuid().ToString(), 11);
+
+                user = new User
+                {
+                    Username = username,
+                    Email = email,
+                    Password = randomPassword,
+                    FullName = fullName,
+                    AvatarUrl = DEFAULT_AVATAR_URL,
+                    Role = 3, // Customer
+                    IsActive = true,
+                    IsEmailVerified = true // Google email is pre-verified
+                };
+
+                user = await _userRepository.CreateAsync(user);
+            }
+
+            // 5. Generate JWT + Refresh Token (same as normal login)
+            var accessTokenExpireMinutes = int.Parse(_configuration["Jwt:ExpireMinutes"] ?? "60");
+            var accessToken = GenerateJwtToken(user, accessTokenExpireMinutes);
+            var refreshTokenStr = Guid.NewGuid().ToString();
+
+            var refreshToken = new RefreshToken
+            {
+                UserId = user.Id,
+                Token = refreshTokenStr,
+                ExpiredAt = DateTime.Now.AddDays(REFRESH_TOKEN_EXPIRY_DAYS),
+                IsRevoked = false
+            };
+            await _refreshTokenRepository.CreateAsync(refreshToken);
+
+            // 6. Check body profile
+            var hasBodyProfile = user.UserBodyProfile != null;
+
+            return ApiResponse<LoginResponse>.SuccessResponse(
+                new LoginResponse
+                {
+                    AccessToken = accessToken,
+                    RefreshToken = refreshTokenStr,
+                    ExpiresIn = accessTokenExpireMinutes * 60,
+                    User = new UserInfoResponse
+                    {
+                        UserId = user.Id,
+                        Username = user.Username,
+                        FullName = user.FullName ?? string.Empty,
+                        Email = user.Email ?? string.Empty,
+                        AvatarUrl = user.AvatarUrl,
+                        Gender = user.Gender,
+                        Role = user.Role,
+                        IsEmailVerified = user.IsEmailVerified == true,
+                        HasBodyProfile = hasBodyProfile
+                    }
+                },
+                "Google login successful.");
+        }
+
+        // ==================== API 11: Google OAuth Redirect Flow (Web/Test) ====================
+        public string GetGoogleLoginUrl(string redirectUri)
+        {
+            var url = "https://accounts.google.com/o/oauth2/v2/auth"
+                + $"?client_id={_googleSettings.ClientId}"
+                + $"&redirect_uri={Uri.EscapeDataString(redirectUri)}"
+                + "&response_type=code"
+                + "&scope=openid%20email%20profile"
+                + "&access_type=offline"
+                + "&prompt=consent";
+            return url;
+        }
+
+        public async Task<ApiResponse<LoginResponse>> GoogleCallbackAsync(string code, string redirectUri)
+        {
+            // 1. Exchange authorization code for tokens
+            var httpClient = _httpClientFactory.CreateClient();
+
+            var tokenRequest = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["code"] = code,
+                ["client_id"] = _googleSettings.ClientId,
+                ["client_secret"] = _googleSettings.ClientSecret,
+                ["redirect_uri"] = redirectUri,
+                ["grant_type"] = "authorization_code"
+            });
+
+            var tokenResponse = await httpClient.PostAsync("https://oauth2.googleapis.com/token", tokenRequest);
+            var tokenJson = await tokenResponse.Content.ReadAsStringAsync();
+
+            if (!tokenResponse.IsSuccessStatusCode)
+                return ApiResponse<LoginResponse>.ErrorResponse($"Failed to exchange Google authorization code. {tokenJson}");
+
+            // 2. Extract ID token from response
+            using var tokenDoc = JsonDocument.Parse(tokenJson);
+            var idToken = tokenDoc.RootElement.GetProperty("id_token").GetString();
+
+            if (string.IsNullOrEmpty(idToken))
+                return ApiResponse<LoginResponse>.ErrorResponse("No ID token received from Google.");
+
+            // 3. Reuse existing GoogleLoginAsync to verify token + create/login user
+            return await GoogleLoginAsync(new GoogleLoginRequest { IdToken = idToken });
+        }
+
         // ==================== Helper Methods ====================
         private string GenerateOtp()
         {
@@ -454,106 +621,113 @@ namespace MV.ApplicationLayer.Services
             };
 
             return $@"
-<!DOCTYPE html>
-<html lang=""en"">
-<head>
-    <meta charset=""UTF-8"" />
-    <meta name=""viewport"" content=""width=device-width, initial-scale=1.0"" />
-    <title>BigSize Fashion - {title}</title>
-</head>
-<body style=""margin:0;padding:0;background-color:#F5F0EB;font-family:'Segoe UI',Helvetica,Arial,sans-serif;"">
-    <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" style=""background-color:#F5F0EB;padding:40px 0;"">
-        <tr>
-            <td align=""center"">
-                <table role=""presentation"" width=""600"" cellpadding=""0"" cellspacing=""0"" style=""background-color:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);"">
-                    <!-- Header -->
+            <!DOCTYPE html>
+            <html lang=""en"">
+            <head>
+                <meta charset=""UTF-8"" />
+                <meta name=""viewport"" content=""width=device-width, initial-scale=1.0"" />
+                <title>BigSize Fashion - {title}</title>
+            </head>
+            <body style=""margin:0;padding:0;background-color:#F5F0EB;font-family:'Segoe UI',Helvetica,Arial,sans-serif;"">
+                <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"" style=""background-color:#F5F0EB;padding:40px 0;"">
                     <tr>
-                        <td style=""background:linear-gradient(135deg,#1C1C1E 0%,#2C2C2E 50%,#3A3A3C 100%);padding:40px 40px 35px;text-align:center;"">
-                            <h1 style=""margin:0;font-size:28px;font-weight:700;color:#D4A574;letter-spacing:6px;text-transform:uppercase;"">BIGSIZE FASHION</h1>
-                            <p style=""margin:8px 0 0;font-size:12px;color:#8E8E93;letter-spacing:3px;text-transform:uppercase;"">Your Style, Your Confidence</p>
-                        </td>
-                    </tr>
-
-                    <!-- Decorative line -->
-                    <tr>
-                        <td style=""padding:0 40px;"">
-                            <div style=""height:3px;background:linear-gradient(90deg,#D4A574,#B76E79,#D4A574);border-radius:2px;""></div>
-                        </td>
-                    </tr>
-
-                    <!-- Content -->
-                    <tr>
-                        <td style=""padding:40px 45px 20px;text-align:center;"">
-                            <h2 style=""margin:0 0 12px;font-size:24px;font-weight:700;color:#1C1C1E;"">{title}</h2>
-                            <p style=""margin:0 0 30px;font-size:15px;color:#636366;line-height:1.7;"">
-                                {description}
-                            </p>
-
-                            <!-- OTP Digits -->
-                            <table role=""presentation"" cellpadding=""0"" cellspacing=""0"" align=""center"" style=""margin:0 auto 25px;"">
+                        <td align=""center"">
+                            <table role=""presentation"" width=""600"" cellpadding=""0"" cellspacing=""0"" style=""background-color:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);"">
+                    
                                 <tr>
-                                    <td style=""padding:0 4px;""><div style=""width:48px;height:56px;background-color:#1C1C1E;border-radius:10px;text-align:center;line-height:56px;font-size:26px;font-weight:700;color:#D4A574;"">{d1}</div></td>
-                                    <td style=""padding:0 4px;""><div style=""width:48px;height:56px;background-color:#1C1C1E;border-radius:10px;text-align:center;line-height:56px;font-size:26px;font-weight:700;color:#D4A574;"">{d2}</div></td>
-                                    <td style=""padding:0 4px;""><div style=""width:48px;height:56px;background-color:#1C1C1E;border-radius:10px;text-align:center;line-height:56px;font-size:26px;font-weight:700;color:#D4A574;"">{d3}</div></td>
-                                    <td style=""padding:0 8px;""><div style=""width:12px;height:4px;background-color:#D4A574;border-radius:2px;margin-top:26px;""></div></td>
-                                    <td style=""padding:0 4px;""><div style=""width:48px;height:56px;background-color:#1C1C1E;border-radius:10px;text-align:center;line-height:56px;font-size:26px;font-weight:700;color:#D4A574;"">{d4}</div></td>
-                                    <td style=""padding:0 4px;""><div style=""width:48px;height:56px;background-color:#1C1C1E;border-radius:10px;text-align:center;line-height:56px;font-size:26px;font-weight:700;color:#D4A574;"">{d5}</div></td>
-                                    <td style=""padding:0 4px;""><div style=""width:48px;height:56px;background-color:#1C1C1E;border-radius:10px;text-align:center;line-height:56px;font-size:26px;font-weight:700;color:#D4A574;"">{d6}</div></td>
+                                    <td style=""background:linear-gradient(135deg,#1C1C1E 0%,#2C2C2E 50%,#3A3A3C 100%);padding:40px 40px 35px;text-align:center;"">
+                                        <h1 style=""margin:0;font-size:28px;font-weight:700;color:#D4A574;letter-spacing:6px;text-transform:uppercase;"">BIGSIZE FASHION</h1>
+                                        <p style=""margin:8px 0 0;font-size:12px;color:#8E8E93;letter-spacing:3px;text-transform:uppercase;"">Your Style, Your Confidence</p>
+                                    </td>
                                 </tr>
-                            </table>
 
-                            <!-- Timer -->
-                            <table role=""presentation"" cellpadding=""0"" cellspacing=""0"" align=""center"" style=""margin:0 auto 30px;"">
                                 <tr>
-                                    <td style=""background-color:#FFF8F0;border:1px solid #F0E0D0;border-radius:8px;padding:10px 20px;text-align:center;"">
-                                        <span style=""font-size:13px;color:#B76E79;font-weight:600;"">This code expires in {expiryMinutes} minutes</span>
+                                    <td style=""padding:0 40px;"">
+                                        <div style=""height:3px;background:linear-gradient(90deg,#D4A574,#B76E79,#D4A574);border-radius:2px;""></div>
+                                    </td>
+                                </tr>
+
+                                <tr>
+                                    <td style=""padding:40px 45px 20px;text-align:center;"">
+                                        <h2 style=""margin:0 0 12px;font-size:24px;font-weight:700;color:#1C1C1E;"">{title}</h2>
+                                        <p style=""margin:0 0 30px;font-size:15px;color:#636366;line-height:1.7;"">
+                                            {description}
+                                        </p>
+
+                                        <table role=""presentation"" cellpadding=""0"" cellspacing=""0"" align=""center"" style=""margin:0 auto 25px;"">
+                                            <tr>
+                                                <td style=""padding:0 4px;"">
+                                                    <div style=""width:48px;height:56px;background-color:#1C1C1E;border-radius:10px;text-align:center;line-height:56px;font-size:26px;font-weight:700;color:#D4A574;"">{d1}</div>
+                                                </td>
+                                                <td style=""padding:0 4px;"">
+                                                    <div style=""width:48px;height:56px;background-color:#1C1C1E;border-radius:10px;text-align:center;line-height:56px;font-size:26px;font-weight:700;color:#D4A574;"">{d2}</div>
+                                                </td>
+                                                <td style=""padding:0 4px;"">
+                                                    <div style=""width:48px;height:56px;background-color:#1C1C1E;border-radius:10px;text-align:center;line-height:56px;font-size:26px;font-weight:700;color:#D4A574;"">{d3}</div>
+                                                </td>
+                                                <td style=""padding:0 8px;"">
+                                                    <div style=""width:12px;height:4px;background-color:#D4A574;border-radius:2px;margin-top:26px;""></div>
+                                                </td>
+                                                <td style=""padding:0 4px;"">
+                                                    <div style=""width:48px;height:56px;background-color:#1C1C1E;border-radius:10px;text-align:center;line-height:56px;font-size:26px;font-weight:700;color:#D4A574;"">{d4}</div>
+                                                </td>
+                                                <td style=""padding:0 4px;"">
+                                                    <div style=""width:48px;height:56px;background-color:#1C1C1E;border-radius:10px;text-align:center;line-height:56px;font-size:26px;font-weight:700;color:#D4A574;"">{d5}</div>
+                                                </td>
+                                                <td style=""padding:0 4px;"">
+                                                    <div style=""width:48px;height:56px;background-color:#1C1C1E;border-radius:10px;text-align:center;line-height:56px;font-size:26px;font-weight:700;color:#D4A574;"">{d6}</div>
+                                                </td>
+                                            </tr>
+                                        </table>
+
+                                        <table role=""presentation"" cellpadding=""0"" cellspacing=""0"" align=""center"" style=""margin:0 auto 30px;"">
+                                            <tr>
+                                                <td style=""background-color:#FFF8F0;border:1px solid #F0E0D0;border-radius:8px;padding:10px 20px;text-align:center;"">
+                                                    <span style=""font-size:13px;color:#B76E79;font-weight:600;"">This code expires in {expiryMinutes} minutes</span>
+                                                </td>
+                                            </tr>
+                                        </table>
+
+                                        <p style=""margin:0;font-size:13px;color:#AEAEB2;line-height:1.6;"">If you didn't request this code, please safely ignore this email.</p>
+                                    </td>
+                                </tr>
+
+                                <tr>
+                                    <td style=""padding:0 45px;"">
+                                        <div style=""height:1px;background-color:#E5E5EA;""></div>
+                                    </td>
+                                </tr>
+
+                                <tr>
+                                    <td style=""padding:25px 45px 30px;"">
+                                        <h3 style=""margin:0 0 12px;font-size:15px;font-weight:700;color:#1C1C1E;"">Need Help?</h3>
+                                        <table role=""presentation"" cellpadding=""0"" cellspacing=""0"" style=""margin-top:4px;"">
+                                            <tr>
+                                                <td style=""padding:4px 0;font-size:13px;color:#636366;"">
+                                                    Phone: <a href=""tel:0775743304"" style=""color:#B76E79;text-decoration:none;font-weight:600;"">077 574 3304</a>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td style=""padding:4px 0;font-size:13px;color:#636366;"">
+                                                    Email: <a href=""mailto:hoangnv10052004@gmail.com"" style=""color:#B76E79;text-decoration:none;font-weight:600;"">hoangnv10052004@gmail.com</a>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+
+                                <tr>
+                                    <td style=""background-color:#1C1C1E;padding:25px 40px;text-align:center;"">
+                                        <p style=""margin:0 0 6px;font-size:12px;color:#D4A574;letter-spacing:2px;text-transform:uppercase;font-weight:600;"">BigSize Fashion</p>
+                                        <p style=""margin:0;font-size:11px;color:#636366;"">&copy; 2026 BigSize Fashion. All rights reserved.</p>
                                     </td>
                                 </tr>
                             </table>
-
-                            <p style=""margin:0;font-size:13px;color:#AEAEB2;line-height:1.6;"">If you didn't request this code, please safely ignore this email.</p>
-                        </td>
-                    </tr>
-
-                    <!-- Divider -->
-                    <tr>
-                        <td style=""padding:0 45px;"">
-                            <div style=""height:1px;background-color:#E5E5EA;""></div>
-                        </td>
-                    </tr>
-
-                    <!-- Support Section -->
-                    <tr>
-                        <td style=""padding:25px 45px 30px;"">
-                            <h3 style=""margin:0 0 12px;font-size:15px;font-weight:700;color:#1C1C1E;"">Need Help?</h3>
-                            <table role=""presentation"" cellpadding=""0"" cellspacing=""0"" style=""margin-top:4px;"">
-                                <tr>
-                                    <td style=""padding:4px 0;font-size:13px;color:#636366;"">
-                                        Phone: <a href=""tel:0775743304"" style=""color:#B76E79;text-decoration:none;font-weight:600;"">077 574 3304</a>
-                                    </td>
-                                </tr>
-                                <tr>
-                                    <td style=""padding:4px 0;font-size:13px;color:#636366;"">
-                                        Email: <a href=""mailto:hoangnv10052004@gmail.com"" style=""color:#B76E79;text-decoration:none;font-weight:600;"">hoangnv10052004@gmail.com</a>
-                                    </td>
-                                </tr>
-                            </table>
-                        </td>
-                    </tr>
-
-                    <!-- Footer -->
-                    <tr>
-                        <td style=""background-color:#1C1C1E;padding:25px 40px;text-align:center;"">
-                            <p style=""margin:0 0 6px;font-size:12px;color:#D4A574;letter-spacing:2px;text-transform:uppercase;font-weight:600;"">BigSize Fashion</p>
-                            <p style=""margin:0;font-size:11px;color:#636366;"">&copy; 2026 BigSize Fashion. All rights reserved.</p>
                         </td>
                     </tr>
                 </table>
-            </td>
-        </tr>
-    </table>
-</body>
-</html>";
+            </body>
+            </html>";
         }
     }
 }
