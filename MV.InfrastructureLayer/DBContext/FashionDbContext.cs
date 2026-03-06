@@ -1,8 +1,7 @@
-﻿using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
-using MV.DomainLayer.Entities;
-using System;
+﻿using System;
 using System.Collections.Generic;
+using MV.DomainLayer.Entities;
+using Microsoft.EntityFrameworkCore;
 
 namespace MV.InfrastructureLayer.DBContext;
 
@@ -43,6 +42,8 @@ public partial class FashionDbContext : DbContext
 
     public virtual DbSet<RefreshToken> RefreshTokens { get; set; }
 
+    public virtual DbSet<Refund> Refunds { get; set; }
+
     public virtual DbSet<ShipperLocation> ShipperLocations { get; set; }
 
     public virtual DbSet<SizeGuide> SizeGuides { get; set; }
@@ -57,19 +58,9 @@ public partial class FashionDbContext : DbContext
 
     public virtual DbSet<Wishlist> Wishlists { get; set; }
 
-    private string GetConnectionString()
-    {
-        IConfiguration config = new ConfigurationBuilder()
-             .SetBasePath(Directory.GetCurrentDirectory())
-                    .AddJsonFile("appsettings.json", true, true)
-                    .Build();
-        var strConn = config["ConnectionStrings:DefaultConnection"];
-
-        return strConn!;
-    }
-
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
-        => optionsBuilder.UseNpgsql(GetConnectionString());
+#warning To protect potentially sensitive information in your connection string, you should move it out of source code. You can avoid scaffolding the connection string by using the Name= syntax to read it from configuration - see https://go.microsoft.com/fwlink/?linkid=2131148. For more guidance on storing connection strings, see https://go.microsoft.com/fwlink/?LinkId=723263.
+        => optionsBuilder.UseNpgsql("Host=localhost;Port=5432;Database=FASHION-DB;Username=postgres;Password=12345");
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -417,6 +408,41 @@ public partial class FashionDbContext : DbContext
             entity.HasOne(d => d.User).WithMany(p => p.RefreshTokens)
                 .HasForeignKey(d => d.UserId)
                 .HasConstraintName("RefreshTokens_UserId_fkey");
+        });
+
+        modelBuilder.Entity<Refund>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("Refunds_pkey");
+
+            entity.HasIndex(e => e.CreatedAt, "Idx_Refunds_Created").IsDescending();
+
+            entity.HasIndex(e => e.Status, "Idx_Refunds_Status");
+
+            entity.HasIndex(e => e.UserId, "Idx_Refunds_User");
+
+            entity.HasIndex(e => e.OrderId, "Refunds_OrderId_key").IsUnique();
+
+            entity.Property(e => e.AdminNote).HasMaxLength(500);
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("CURRENT_TIMESTAMP")
+                .HasColumnType("timestamp without time zone");
+            entity.Property(e => e.ProcessedAt).HasColumnType("timestamp without time zone");
+            entity.Property(e => e.Status)
+                .HasMaxLength(20)
+                .HasDefaultValueSql("'PENDING'::character varying");
+
+            entity.HasOne(d => d.Order).WithOne(p => p.Refund)
+                .HasForeignKey<Refund>(d => d.OrderId)
+                .HasConstraintName("Refunds_OrderId_fkey");
+
+            entity.HasOne(d => d.ProcessedByNavigation).WithMany(p => p.RefundProcessedByNavigations)
+                .HasForeignKey(d => d.ProcessedBy)
+                .OnDelete(DeleteBehavior.SetNull)
+                .HasConstraintName("Refunds_ProcessedBy_fkey");
+
+            entity.HasOne(d => d.User).WithMany(p => p.RefundUsers)
+                .HasForeignKey(d => d.UserId)
+                .HasConstraintName("Refunds_UserId_fkey");
         });
 
         modelBuilder.Entity<ShipperLocation>(entity =>
