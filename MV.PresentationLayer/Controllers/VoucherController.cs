@@ -21,6 +21,18 @@ namespace MV.PresentationLayer.Controllers
         }
 
         /// <summary>
+        /// Get available vouchers for customers
+        /// </summary>
+        [HttpGet]
+        [SwaggerOperation(Summary = "Get available vouchers")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        public async Task<IActionResult> GetAvailableVouchers()
+        {
+            var result = await _voucherService.GetAvailableVouchersAsync();
+            return Ok(result);
+        }
+
+        /// <summary>
         /// Validate a voucher code against current cart
         /// </summary>
         [HttpPost("validate")]

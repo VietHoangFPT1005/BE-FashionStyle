@@ -190,16 +190,16 @@ namespace MV.ApplicationLayer.Services
         #region Helpers
 
         /// <summary>
-        /// Extract order code (ORD-XXXXXXXX-XXXX) from transfer description
+        /// Extract order code (SEVQR-XXXXXXXX-XXXX) from transfer description
         /// </summary>
         private string? ExtractOrderCode(string? content)
         {
             if (string.IsNullOrEmpty(content))
                 return null;
 
-            // Look for pattern ORD-YYYYMMDD-XXXX
+            // Look for pattern SEVQR-YYYYMMDD-XXXX
             var match = System.Text.RegularExpressions.Regex.Match(
-                content, @"ORD-\d{8}-\d{4}");
+                content, @"SEVQR-\d{8}-\d{4}");
 
             return match.Success ? match.Value : null;
         }

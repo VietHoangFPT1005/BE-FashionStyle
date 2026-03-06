@@ -155,7 +155,7 @@ namespace MV.ApplicationLayer.Services
 
                 // 6. Generate order code
                 var todayCount = await _orderRepository.GetTodayOrderCountAsync();
-                var orderCode = $"ORD-{DateTime.Now:yyyyMMdd}-{(todayCount + 1):D4}";
+                var orderCode = $"SEVQR-{DateTime.Now:yyyyMMdd}-{(todayCount + 1):D4}";
 
                 // 7. Build full shipping address string
                 var fullAddress = BuildFullAddress(address);

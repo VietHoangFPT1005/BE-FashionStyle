@@ -19,17 +19,20 @@ namespace MV.PresentationLayer.Controllers
         private readonly IOrderService _orderService;
         private readonly IAdminService _adminService;
         private readonly INotificationService _notificationService;
+        private readonly IReviewService _reviewService;
 
         public AdminController(
             IUserService userService,
             IOrderService orderService,
             IAdminService adminService,
-            INotificationService notificationService)
+            INotificationService notificationService,
+            IReviewService reviewService)
         {
             _userService = userService;
             _orderService = orderService;
             _adminService = adminService;
             _notificationService = notificationService;
+            _reviewService = reviewService;
         }
 
         #region User Management
@@ -236,6 +239,31 @@ namespace MV.PresentationLayer.Controllers
                 return BadRequest(result);
 
             return StatusCode(StatusCodes.Status201Created, result);
+        }
+
+        #endregion
+
+        #region Review Management (Admin)
+
+        /// <summary>
+        /// Delete any review (Admin only)
+        /// </summary>
+        [HttpDelete("reviews/{reviewId}")]
+        [SwaggerOperation(Summary = "Delete any review (Admin only)")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
+        public async Task<IActionResult> AdminDeleteReview(int reviewId)
+        {
+            if (!IsAdmin())
+                return StatusCode(StatusCodes.Status403Forbidden,
+                    ApiResponse.ErrorResponse("Access denied. Admin role required."));
+
+            var result = await _reviewService.AdminDeleteReviewAsync(reviewId);
+            if (!result.Success)
+                return NotFound(result);
+
+            return Ok(result);
         }
 
         #endregion

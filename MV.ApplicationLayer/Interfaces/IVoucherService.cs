@@ -7,5 +7,6 @@ namespace MV.ApplicationLayer.ServiceInterfaces
     public interface IVoucherService
     {
         Task<ApiResponse<VoucherValidationResponse>> ValidateVoucherAsync(int userId, ValidateVoucherRequest request);
+        Task<ApiResponse<List<VoucherResponse>>> GetAvailableVouchersAsync();
     }
 }

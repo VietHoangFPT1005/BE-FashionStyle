@@ -1,22 +1,27 @@
+using Microsoft.EntityFrameworkCore;
 using MV.ApplicationLayer.ServiceInterfaces;
 using MV.DomainLayer.DTOs.Common;
 using MV.DomainLayer.DTOs.Voucher.Request;
 using MV.DomainLayer.DTOs.Voucher.Response;
+using MV.InfrastructureLayer.DBContext;
 using MV.InfrastructureLayer.Interfaces;
 
 namespace MV.ApplicationLayer.Services
 {
     public class VoucherService : IVoucherService
     {
+        private readonly FashionDbContext _context;
         private readonly IVoucherRepository _voucherRepository;
         private readonly ICartItemRepository _cartItemRepository;
         private readonly IProductVariantRepository _variantRepository;
 
         public VoucherService(
+            FashionDbContext context,
             IVoucherRepository voucherRepository,
             ICartItemRepository cartItemRepository,
             IProductVariantRepository variantRepository)
         {
+            _context = context;
             _voucherRepository = voucherRepository;
             _cartItemRepository = cartItemRepository;
             _variantRepository = variantRepository;
@@ -105,6 +110,34 @@ namespace MV.ApplicationLayer.Services
             };
 
             return ApiResponse<VoucherValidationResponse>.SuccessResponse(response);
+        }
+
+        // ==================== Get Available Vouchers (Customer) ====================
+        public async Task<ApiResponse<List<VoucherResponse>>> GetAvailableVouchersAsync()
+        {
+            var now = DateTime.Now;
+            var vouchers = await _context.Vouchers
+                .Where(v => v.IsActive == true
+                    && v.StartDate <= now
+                    && v.EndDate >= now
+                    && (!v.UsageLimit.HasValue || (v.UsedCount ?? 0) < v.UsageLimit.Value))
+                .OrderByDescending(v => v.CreatedAt)
+                .ToListAsync();
+
+            var response = vouchers.Select(v => new VoucherResponse
+            {
+                VoucherId = v.Id,
+                Code = v.Code,
+                Description = v.Description,
+                DiscountType = v.DiscountType,
+                DiscountValue = v.DiscountValue,
+                MinOrderAmount = v.MinOrderAmount,
+                MaxDiscountAmount = v.MaxDiscountAmount,
+                StartDate = v.StartDate,
+                EndDate = v.EndDate
+            }).ToList();
+
+            return ApiResponse<List<VoucherResponse>>.SuccessResponse(response);
         }
     }
 }

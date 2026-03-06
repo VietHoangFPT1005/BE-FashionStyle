@@ -165,6 +165,10 @@ namespace MV.PresentationLayer
             builder.Services.AddScoped<INotificationService, NotificationService>();
             builder.Services.AddScoped<IAdminService, AdminService>();
 
+            // Services - Milestone 5 (Admin Management + Refund)
+            builder.Services.AddScoped<IAdminProductService, AdminProductService>();
+            builder.Services.AddScoped<IRefundService, RefundService>();
+
             // HttpClient for external API calls
             builder.Services.AddHttpClient();
 

@@ -46,6 +46,55 @@ namespace MV.PresentationLayer.Controllers
             return StatusCode(StatusCodes.Status201Created, result);
         }
 
+        /// <summary>
+        /// Update your review
+        /// </summary>
+        [HttpPut("{productId}/reviews/{reviewId}")]
+        [Authorize]
+        [SwaggerOperation(Summary = "Update your review")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        public async Task<IActionResult> UpdateReview(int productId, int reviewId, [FromBody] UpdateReviewRequest request)
+        {
+            var userId = GetCurrentUserId();
+            if (userId == 0)
+                return Unauthorized(ApiResponse.ErrorResponse("Invalid token."));
+
+            var result = await _reviewService.UpdateReviewAsync(userId, productId, reviewId, request);
+            if (!result.Success)
+            {
+                if (result.Message?.Contains("not found") == true)
+                    return NotFound(result);
+                return BadRequest(result);
+            }
+
+            return Ok(result);
+        }
+
+        /// <summary>
+        /// Delete your review
+        /// </summary>
+        [HttpDelete("{productId}/reviews/{reviewId}")]
+        [Authorize]
+        [SwaggerOperation(Summary = "Delete your review")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        public async Task<IActionResult> DeleteReview(int productId, int reviewId)
+        {
+            var userId = GetCurrentUserId();
+            if (userId == 0)
+                return Unauthorized(ApiResponse.ErrorResponse("Invalid token."));
+
+            var result = await _reviewService.DeleteReviewAsync(userId, productId, reviewId);
+            if (!result.Success)
+                return NotFound(result);
+
+            return Ok(result);
+        }
+
         private int GetCurrentUserId()
         {
             var userIdClaim = User.FindFirst("userId")?.Value

@@ -109,5 +109,101 @@ namespace MV.ApplicationLayer.Services
 
             return ApiResponse<CreateReviewResponse>.SuccessResponse(response, "Review submitted successfully.");
         }
+
+        // ==================== Update Review ====================
+        public async Task<ApiResponse<CreateReviewResponse>> UpdateReviewAsync(
+            int userId, int productId, int reviewId, UpdateReviewRequest request)
+        {
+            var review = await _context.ProductReviews
+                .FirstOrDefaultAsync(r => r.Id == reviewId && r.ProductId == productId && r.UserId == userId);
+
+            if (review == null)
+                return ApiResponse<CreateReviewResponse>.ErrorResponse("Review not found.");
+
+            if (request.Rating.HasValue) review.Rating = request.Rating.Value;
+            if (request.Comment != null) review.Comment = request.Comment;
+            if (request.ReviewImageUrl != null) review.ReviewImageUrl = request.ReviewImageUrl;
+            if (request.ShowBodyInfo.HasValue) review.ShowBodyInfo = request.ShowBodyInfo.Value;
+
+            await _context.SaveChangesAsync();
+
+            // Recalculate product rating
+            await RecalculateProductRatingAsync(productId);
+
+            var response = new CreateReviewResponse
+            {
+                ReviewId = review.Id,
+                ProductId = productId,
+                Rating = review.Rating,
+                Comment = review.Comment,
+                BodyInfo = review.ShowBodyInfo == true ? new ReviewBodyInfoResponse
+                {
+                    HeightCm = review.HeightCm,
+                    WeightKg = review.WeightKg,
+                    SizeOrdered = review.SizeOrdered
+                } : null,
+                CreatedAt = review.CreatedAt
+            };
+
+            return ApiResponse<CreateReviewResponse>.SuccessResponse(response, "Review updated successfully.");
+        }
+
+        // ==================== Delete Review (User) ====================
+        public async Task<ApiResponse<object>> DeleteReviewAsync(int userId, int productId, int reviewId)
+        {
+            var review = await _context.ProductReviews
+                .FirstOrDefaultAsync(r => r.Id == reviewId && r.ProductId == productId && r.UserId == userId);
+
+            if (review == null)
+                return ApiResponse<object>.ErrorResponse("Review not found.");
+
+            _context.ProductReviews.Remove(review);
+            await _context.SaveChangesAsync();
+
+            await RecalculateProductRatingAsync(productId);
+
+            return ApiResponse<object>.SuccessResponse("Review deleted successfully.");
+        }
+
+        // ==================== Delete Review (Admin) ====================
+        public async Task<ApiResponse<object>> AdminDeleteReviewAsync(int reviewId)
+        {
+            var review = await _context.ProductReviews.FindAsync(reviewId);
+            if (review == null)
+                return ApiResponse<object>.ErrorResponse("Review not found.");
+
+            var productId = review.ProductId;
+            _context.ProductReviews.Remove(review);
+            await _context.SaveChangesAsync();
+
+            await RecalculateProductRatingAsync(productId);
+
+            return ApiResponse<object>.SuccessResponse("Review deleted successfully.");
+        }
+
+        private async Task RecalculateProductRatingAsync(int productId)
+        {
+            var reviews = await _context.ProductReviews
+                .Where(r => r.ProductId == productId)
+                .ToListAsync();
+
+            if (reviews.Any())
+            {
+                var avgRating = Math.Round((decimal)reviews.Average(r => r.Rating), 1);
+                await _context.Products
+                    .Where(p => p.Id == productId)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(p => p.AverageRating, avgRating)
+                        .SetProperty(p => p.TotalReviews, reviews.Count));
+            }
+            else
+            {
+                await _context.Products
+                    .Where(p => p.Id == productId)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(p => p.AverageRating, (decimal?)0)
+                        .SetProperty(p => p.TotalReviews, 0));
+            }
+        }
     }
 }

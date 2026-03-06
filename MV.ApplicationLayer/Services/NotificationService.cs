@@ -110,5 +110,25 @@ namespace MV.ApplicationLayer.Services
                 sentCount = customerIds.Count
             }, $"Notification sent to {customerIds.Count} customers.");
         }
+
+        // ==================== Get Unread Count ====================
+        public async Task<ApiResponse<object>> GetUnreadCountAsync(int userId)
+        {
+            var count = await _notificationRepository.GetUnreadCountAsync(userId);
+            return ApiResponse<object>.SuccessResponse(new { unreadCount = count });
+        }
+
+        // ==================== Delete Notification ====================
+        public async Task<ApiResponse<object>> DeleteNotificationAsync(int userId, int notificationId)
+        {
+            var notification = await _notificationRepository.GetByIdAndUserIdAsync(notificationId, userId);
+            if (notification == null)
+                return ApiResponse<object>.ErrorResponse("Notification not found.");
+
+            _context.Notifications.Remove(notification);
+            await _context.SaveChangesAsync();
+
+            return ApiResponse<object>.SuccessResponse("Notification deleted successfully.");
+        }
     }
 }

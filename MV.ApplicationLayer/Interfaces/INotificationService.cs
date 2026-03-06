@@ -10,5 +10,7 @@ namespace MV.ApplicationLayer.ServiceInterfaces
         Task<ApiResponse<object>> MarkAsReadAsync(int userId, int notificationId);
         Task<ApiResponse<object>> MarkAllAsReadAsync(int userId);
         Task<ApiResponse<object>> BroadcastAsync(BroadcastNotificationRequest request);
+        Task<ApiResponse<object>> GetUnreadCountAsync(int userId);
+        Task<ApiResponse<object>> DeleteNotificationAsync(int userId, int notificationId);
     }
 }

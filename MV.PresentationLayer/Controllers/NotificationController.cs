@@ -63,6 +63,36 @@ namespace MV.PresentationLayer.Controllers
             return Ok(result);
         }
 
+        /// <summary>
+        /// Get unread notification count
+        /// </summary>
+        [HttpGet("unread-count")]
+        [SwaggerOperation(Summary = "Get unread notification count")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        public async Task<IActionResult> GetUnreadCount()
+        {
+            var userId = GetCurrentUserId();
+            var result = await _notificationService.GetUnreadCountAsync(userId);
+            return Ok(result);
+        }
+
+        /// <summary>
+        /// Delete a notification
+        /// </summary>
+        [HttpDelete("{notificationId}")]
+        [SwaggerOperation(Summary = "Delete a notification")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> DeleteNotification(int notificationId)
+        {
+            var userId = GetCurrentUserId();
+            var result = await _notificationService.DeleteNotificationAsync(userId, notificationId);
+            if (!result.Success)
+                return NotFound(result);
+
+            return Ok(result);
+        }
+
         #region Helpers
 
         private int GetCurrentUserId()
