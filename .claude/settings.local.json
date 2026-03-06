@@ -4,7 +4,9 @@
       "Bash(python3 -c \":*)",
       "Bash(powershell.exe -Command \":*)",
       "Bash(powershell.exe -NoProfile -Command \"Add-Type -AssemblyName System.IO.Compression.FileSystem; $z = [System.IO.Compression.ZipFile]::OpenRead\\(''C:\\\\Users\\\\ADMIN\\\\Desktop\\\\Milestone2_Backend_Tasks.docx''\\); $e = $z.GetEntry\\(''word/document.xml''\\); $s = $e.Open\\(\\); $r = New-Object System.IO.StreamReader\\($s\\); $x = [xml]$r.ReadToEnd\\(\\); $r.Close\\(\\); $s.Close\\(\\); $z.Dispose\\(\\); $n = New-Object System.Xml.XmlNamespaceManager\\($x.NameTable\\); $n.AddNamespace\\(''w'',''http://schemas.openxmlformats.org/wordprocessingml/2006/main''\\); foreach\\($p in $x.SelectNodes\\(''//w:p'',$n\\)\\){$t='''';foreach\\($i in $p.SelectNodes\\(''.//w:t'',$n\\)\\){$t+=$i.InnerText};if\\($t.Trim\\(\\)\\){$t}}\")",
-      "Bash(powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\\\Users\\\\ADMIN\\\\Desktop\\\\read_docx.ps1\")"
+      "Bash(powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\\\Users\\\\ADMIN\\\\Desktop\\\\read_docx.ps1\")",
+      "Bash(dotnet build)",
+      "Bash(dotnet add package Google.Apis.Auth)"
     ]
   }
 }

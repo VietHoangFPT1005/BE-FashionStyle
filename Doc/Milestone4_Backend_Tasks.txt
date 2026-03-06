@@ -1,0 +1,848 @@
+MILESTONE 4
+BACKEND TASK DOCUMENT
+Shipping & Map Tracking, AI Chat, Notifications & Admin
+Timeline: Week 4 (7 days)
+Version: 1.0 | February 2026
+
+================================================================
+1. Tong Quan Milestone 4
+================================================================
+
+1.1 Muc Tieu
+- Xay dung APIs Shipper (nhan don, cap nhat trang thai giao hang)
+- Xay dung APIs GPS Tracking real-time (Map Tracking)
+- Xay dung APIs Chat AI tu van size (Gemini / OpenAI)
+- Xay dung APIs Notification (thong bao)
+- Xay dung APIs Admin Dashboard & User Management
+
+1.2 Timeline
+
+Ngay  | Sprint      | Noi dung
+------|------------|------------------------------------------
+1-2   | Sprint 4.1 | Shipper APIs & GPS Tracking
+3-4   | Sprint 4.2 | AI Chat Size Consultation APIs
+5-6   | Sprint 4.3 | Notifications & Admin Management APIs
+7     | Sprint 4.4 | Testing & Bug Fixes
+
+1.3 Tables Su Dung
+
+Table            | Muc dich
+-----------------|------------------------------------------
+ShipperLocations | Vi tri GPS real-time cua Shipper
+Orders           | Cap nhat trang thai giao hang
+Payments         | Cap nhat thanh toan COD khi giao
+ChatAiHistory    | Lich su hoi thoai AI tu van size
+UserBodyProfiles | So do co the (gui cho AI)
+SizeGuides       | Thong so size san pham (gui cho AI)
+Products         | Thong tin san pham (AI goi y)
+Notifications    | Thong bao cho nguoi dung
+Users            | Quan ly user (Admin)
+Categories       | Quan ly danh muc (Admin)
+Vouchers         | Quan ly voucher (Admin)
+
+================================================================
+2. Sprint 4.1: Shipper APIs & GPS Tracking
+================================================================
+Timeline: Ngay 1-2 | Effort: 16h
+
+----------------------------------------------------------------
+API 1: Get Shipper's Orders
+----------------------------------------------------------------
+Task ID       : BE-4.1.1
+Endpoint      : GET /api/shipper/orders
+Effort        : 2 hours
+Priority      : Critical
+Tables        : Orders, OrderItems
+Auth Required : Yes (Shipper, Role = 4)
+
+Query Parameters:
+Parameter | Type    | Default | Description
+----------|---------|---------|----------------------------
+status    | string? | null    | Filter: PROCESSING, SHIPPING, DELIVERED
+
+Response Success (200):
+{
+  "success": true,
+  "data": [
+    {
+      "orderId": 1,
+      "orderCode": "ORD-20260227-0001",
+      "status": "SHIPPING",
+      "total": 478200,
+      "paymentMethod": "SEPAY",
+      "totalItems": 1,
+      "shippingInfo": {
+        "name": "Tran Thi Lan",
+        "phone": "0912345678",
+        "address": "123 Nguyen Trai, P.Ben Thanh, Quan 1, TP. Ho Chi Minh",
+        "latitude": 10.7726890,
+        "longitude": 106.6980610
+      },
+      "createdAt": "2026-02-27T08:00:00Z"
+    }
+  ]
+}
+
+Business Logic:
+- Verify Role = 4 (Shipper)
+- Chi lay Orders co ShipperId = userId hien tai
+- Filter theo Status neu co
+- Tra ve shipping address kem Lat/Long de hien thi tren Map
+
+----------------------------------------------------------------
+API 2: Pickup Order (Start Shipping)
+----------------------------------------------------------------
+Task ID       : BE-4.1.2
+Endpoint      : PUT /api/shipper/orders/{orderId}/pickup
+Effort        : 2 hours
+Priority      : Critical
+Tables        : Orders, Notifications
+Auth Required : Yes (Shipper)
+
+Response Success (200):
+{
+  "success": true,
+  "message": "Da xac nhan lay hang. Bat dau giao."
+}
+
+Response Error (400):
+{ "success": false, "message": "Don hang khong o trang thai cho lay hang" }
+
+Business Logic:
+- Verify orderId co ShipperId = userId hien tai
+- Check Status = 'PROCESSING'
+- Cap nhat: Status = 'SHIPPING', ShippedAt = NOW
+- Tao Notification cho Customer: "Don hang ORD-xxx dang duoc giao den ban"
+
+----------------------------------------------------------------
+API 3: Deliver Order (Confirm Delivery)
+----------------------------------------------------------------
+Task ID       : BE-4.1.3
+Endpoint      : PUT /api/shipper/orders/{orderId}/deliver
+Effort        : 3 hours
+Priority      : Critical
+Tables        : Orders, Payments, Notifications
+Auth Required : Yes (Shipper)
+
+Response Success (200):
+{
+  "success": true,
+  "message": "Giao hang thanh cong"
+}
+
+Business Logic:
+- Verify orderId co ShipperId = userId
+- Check Status = 'SHIPPING'
+- Cap nhat: Status = 'DELIVERED', DeliveredAt = NOW
+- Neu PaymentMethod = 'COD':
+  Cap nhat Payments.Status = 'COMPLETED', PaidAt = NOW
+- Tao Notification cho Customer: "Don hang da duoc giao thanh cong"
+
+----------------------------------------------------------------
+API 4: Delivery Failed
+----------------------------------------------------------------
+Task ID       : BE-4.1.4
+Endpoint      : PUT /api/shipper/orders/{orderId}/fail
+Effort        : 3 hours
+Priority      : High
+Tables        : Orders, OrderItems, ProductVariants, Products, Payments, Notifications
+Auth Required : Yes (Shipper)
+
+Request Body:
+{
+  "reason": "Khach hang khong co nha"
+}
+
+Response Success (200):
+{
+  "success": true,
+  "message": "Da ghi nhan giao hang that bai. Lan giao thu 2/3.",
+  "data": { "deliveryAttempts": 2, "maxAttempts": 3 }
+}
+
+Response Error - Auto Cancel (200):
+{
+  "success": true,
+  "message": "Giao hang that bai lan thu 3. Don hang tu dong huy.",
+  "data": { "deliveryAttempts": 3, "status": "CANCELLED" }
+}
+
+Business Logic:
+- Verify orderId co ShipperId = userId
+- Check Status = 'SHIPPING'
+- Tang DeliveryAttempts + 1
+- Neu DeliveryAttempts >= 3:
+  a. Status = 'CANCELLED', CancelReason = "Giao hang that bai 3 lan", CancelledAt = NOW
+  b. Hoan tra StockQuantity, giam SoldCount
+  c. Neu da thanh toan SePay: Payment.Status = 'REFUND_PENDING'
+  d. Notification cho Customer: "Don hang bi huy do giao that bai 3 lan"
+- Neu DeliveryAttempts < 3:
+  Notification cho Customer: "Giao hang khong thanh cong. Se giao lai."
+
+----------------------------------------------------------------
+API 5: Update Shipper GPS Location
+----------------------------------------------------------------
+Task ID       : BE-4.1.5
+Endpoint      : POST /api/shipper/location
+Effort        : 2 hours
+Priority      : Critical
+Tables        : ShipperLocations
+Auth Required : Yes (Shipper)
+
+Request Body:
+{
+  "orderId": 1,
+  "latitude": 10.7800000,
+  "longitude": 106.6950000,
+  "accuracy": 10.0,
+  "speed": 25.5,
+  "heading": 180.0
+}
+
+Validation Rules:
+Field     | Rules
+----------|-------------------------------------------
+orderId   | Required, assigned to this shipper, status = SHIPPING
+latitude  | Required, -90 to 90
+longitude | Required, -180 to 180
+accuracy  | Optional, >= 0 (meters)
+speed     | Optional, >= 0 (km/h)
+heading   | Optional, 0-360 (degrees)
+
+Response Success (201):
+{
+  "success": true,
+  "message": "Da cap nhat vi tri"
+}
+
+Business Logic:
+- Verify Shipper Role = 4
+- Verify orderId co ShipperId = userId, Status = 'SHIPPING'
+- INSERT vao ShipperLocations (append-only, khong update)
+- Mobile app goi API nay moi 10-15 giay khi dang giao hang
+- Data nay phuc vu real-time tracking cho Customer
+
+----------------------------------------------------------------
+API 6: Track Order on Map (Customer)
+----------------------------------------------------------------
+Task ID       : BE-4.1.6
+Endpoint      : GET /api/orders/{orderId}/tracking
+Effort        : 4 hours
+Priority      : Critical
+Tables        : ShipperLocations, Orders, Users
+Auth Required : Yes (Customer)
+
+Response Success (200):
+{
+  "success": true,
+  "data": {
+    "orderId": 1,
+    "orderCode": "ORD-20260227-0001",
+    "status": "SHIPPING",
+    "shipper": {
+      "shipperId": 5,
+      "fullName": "Pham Minh Shipper",
+      "phone": "0900000010"
+    },
+    "currentLocation": {
+      "latitude": 10.7760000,
+      "longitude": 106.6960000,
+      "accuracy": 8.0,
+      "speed": 20.0,
+      "heading": 175.0,
+      "updatedAt": "2026-02-27T10:15:30Z"
+    },
+    "destination": {
+      "latitude": 10.7726890,
+      "longitude": 106.6980610,
+      "address": "123 Nguyen Trai, P.Ben Thanh, Quan 1, TP. Ho Chi Minh"
+    },
+    "timeline": {
+      "shippedAt": "2026-02-27T10:00:00Z",
+      "estimatedMinutes": null
+    }
+  }
+}
+
+Response Error (400):
+{ "success": false, "message": "Don hang chua o trang thai dang giao" }
+
+Business Logic:
+- Verify orderId thuoc ve userId
+- Check Status = 'SHIPPING'
+- Lay vi tri moi nhat tu ShipperLocations:
+  WHERE ShipperId = Orders.ShipperId AND OrderId = @orderId
+  ORDER BY CreatedAt DESC LIMIT 1
+- Lay thong tin Shipper tu Users
+- Destination = Orders shipping Lat/Long
+- Client dung data nay hien thi tren Google Maps
+
+SQL Query Structure:
+SELECT sl.* FROM "ShipperLocations" sl
+WHERE sl."OrderId" = @orderId AND sl."ShipperId" = @shipperId
+ORDER BY sl."CreatedAt" DESC
+LIMIT 1;
+
+================================================================
+3. Sprint 4.2: AI Chat Size Consultation
+================================================================
+Timeline: Ngay 3-4 | Effort: 14h
+
+*** DAY LA TINH NANG KY THUAT DAC BIET: CHAT AI TU VAN SIZE ***
+
+----------------------------------------------------------------
+API 7: Send Message to AI Chat
+----------------------------------------------------------------
+Task ID       : BE-4.2.1
+Endpoint      : POST /api/chat/ai
+Effort        : 6 hours
+Priority      : Critical
+Tables        : ChatAiHistory, UserBodyProfiles, SizeGuides, Products
+Auth Required : Yes (Customer)
+
+Request Body:
+{
+  "message": "Minh cao 165cm nang 85kg, vong eo 90cm. Tim ao thun thoai mai giau bung?",
+  "sessionId": "session-001"
+}
+
+Validation Rules:
+Field     | Rules
+----------|-------------------------------------------
+message   | Required, max 1000 chars
+sessionId | Optional, neu null thi tao session moi
+
+Response Success (200):
+{
+  "success": true,
+  "data": {
+    "sessionId": "session-001",
+    "role": "assistant",
+    "content": "Voi so do 165cm/85kg va vong eo 90cm, dang nguoi cua ban nghieng ve dang PEAR. Minh goi y cho ban:\n\n1. **Ao Thun Oversize Cotton Co Gian 4 Chieu** - Size 2XL se vua voi ban (fit score 92%). Chat cotton co gian 4 chieu, form oversize giau bung rat hieu qua. Gia chi 249,000d (giam tu 299,000d).\n\n2. **Ao So Mi Linen Big Size Co Tru** - Size 2XL. Chat linen thoang mat, form regular fit thoai mai. Gia 459,000d.\n\nBan muon xem chi tiet san pham nao?",
+    "suggestedProducts": [
+      {
+        "productId": 1,
+        "name": "Ao Thun Oversize Cotton Co Gian 4 Chieu",
+        "price": 299000,
+        "salePrice": 249000,
+        "recommendedSize": "2XL",
+        "primaryImage": "https://res.cloudinary.com/bigsize/ao-thun-oversize-den-1.jpg"
+      },
+      {
+        "productId": 4,
+        "name": "Ao So Mi Linen Big Size Co Tru",
+        "price": 459000,
+        "salePrice": null,
+        "recommendedSize": "2XL",
+        "primaryImage": "https://res.cloudinary.com/bigsize/ao-so-mi-linen-trang-1.jpg"
+      }
+    ],
+    "createdAt": "2026-02-27T14:30:00Z"
+  }
+}
+
+Business Logic:
+- Lay userId tu JWT
+- Lay UserBodyProfiles cua user
+- Neu sessionId co: lay lich su chat truoc do tu ChatAiHistory
+- Neu sessionId null: tao sessionId moi (UUID)
+- Xay dung AI prompt:
+  a. System prompt: "Ban la chuyen gia tu van thoi trang big size..."
+  b. User body profile: height, weight, bust, waist, hips, bodyShape, fitPreference
+  c. Chat history (neu co)
+  d. Danh sach san pham phu hop (query Products + SizeGuides)
+  e. User message
+- Goi LLM API (Gemini / OpenAI):
+  Model: gemini-pro hoac gpt-4o-mini
+  Temperature: 0.7
+  Max tokens: 1000
+- Parse AI response, trich xuat productIds duoc goi y
+- Luu ChatAiHistory:
+  Role = 'user', Content = user message
+  Role = 'assistant', Content = AI response, SuggestedProductIds = [1, 4]
+- Return AI response + suggested products info
+
+AI Prompt Template:
+"""
+Ban la chuyen gia tu van thoi trang Big Size tai Viet Nam.
+Nhiem vu: Tu van chon san pham va size phu hop voi so do khach hang.
+Phong cach: Than thien, tu tin, khong dung tu miet thi ngoai co.
+
+THONG TIN KHACH HANG:
+- Chieu cao: {height}cm, Can nang: {weight}kg
+- Vong nguc: {bust}cm, Vong eo: {waist}cm, Vong hong: {hips}cm
+- Dang nguoi: {bodyShape}, So thich: {fitPreference}
+
+SAN PHAM CO SAN (co size phu hop):
+{products_list_with_size_guides}
+
+HAY TU VAN CHO KHACH: {user_message}
+"""
+
+----------------------------------------------------------------
+API 8: Get Chat Sessions
+----------------------------------------------------------------
+Task ID       : BE-4.2.2
+Endpoint      : GET /api/chat/ai/sessions
+Effort        : 2 hours
+Priority      : High
+Tables        : ChatAiHistory
+Auth Required : Yes (Customer)
+
+Response Success (200):
+{
+  "success": true,
+  "data": [
+    {
+      "sessionId": "session-001",
+      "lastMessage": "Ban muon xem chi tiet san pham nao?",
+      "messageCount": 4,
+      "createdAt": "2026-02-27T14:00:00Z",
+      "updatedAt": "2026-02-27T14:30:00Z"
+    },
+    {
+      "sessionId": "session-002",
+      "lastMessage": "Minh goi y quan jogger big size ong rong...",
+      "messageCount": 2,
+      "createdAt": "2026-02-26T10:00:00Z",
+      "updatedAt": "2026-02-26T10:15:00Z"
+    }
+  ]
+}
+
+Business Logic:
+- Lay userId tu JWT
+- Group ChatAiHistory theo SessionId
+- Lay lastMessage = message cuoi cung cua moi session
+- Count messageCount
+- Sort theo updatedAt DESC
+
+SQL Query Structure:
+SELECT "SessionId",
+       MAX("Content") FILTER (WHERE "CreatedAt" = max_time) as last_message,
+       COUNT(*) as message_count,
+       MIN("CreatedAt") as created_at,
+       MAX("CreatedAt") as updated_at
+FROM "ChatAiHistory"
+WHERE "UserId" = @userId
+GROUP BY "SessionId"
+ORDER BY MAX("CreatedAt") DESC;
+
+----------------------------------------------------------------
+API 9: Get Chat Session History
+----------------------------------------------------------------
+Task ID       : BE-4.2.3
+Endpoint      : GET /api/chat/ai/sessions/{sessionId}
+Effort        : 2 hours
+Priority      : High
+Tables        : ChatAiHistory
+Auth Required : Yes (Customer)
+
+Response Success (200):
+{
+  "success": true,
+  "data": {
+    "sessionId": "session-001",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Minh cao 165cm nang 85kg, vong eo 90cm. Tim ao thun thoai mai giau bung?",
+        "suggestedProductIds": null,
+        "createdAt": "2026-02-27T14:00:00Z"
+      },
+      {
+        "role": "assistant",
+        "content": "Voi so do 165cm/85kg...",
+        "suggestedProductIds": [1, 4],
+        "createdAt": "2026-02-27T14:00:05Z"
+      }
+    ]
+  }
+}
+
+Business Logic:
+- Verify sessionId thuoc ve userId
+- Lay tat ca ChatAiHistory theo SessionId, ORDER BY CreatedAt ASC
+
+----------------------------------------------------------------
+API 10: Delete Chat Session
+----------------------------------------------------------------
+Task ID       : BE-4.2.4
+Endpoint      : DELETE /api/chat/ai/sessions/{sessionId}
+Effort        : 1 hour
+Priority      : Medium
+Tables        : ChatAiHistory
+Auth Required : Yes (Customer)
+
+Response Success (200):
+{ "success": true, "message": "Da xoa phien chat" }
+
+Business Logic:
+- Verify sessionId thuoc ve userId
+- DELETE all ChatAiHistory WHERE SessionId = @sessionId AND UserId = @userId
+
+================================================================
+4. Sprint 4.3: Notifications & Admin Management
+================================================================
+Timeline: Ngay 5-6 | Effort: 16h
+
+----------------------------------------------------------------
+API 11: Get Notifications
+----------------------------------------------------------------
+Task ID       : BE-4.3.1
+Endpoint      : GET /api/notifications
+Effort        : 2 hours
+Priority      : Critical
+Tables        : Notifications
+Auth Required : Yes (All Roles)
+
+Query Parameters:
+Parameter | Type  | Default | Description
+----------|-------|---------|----------------------------
+page      | int   | 1       | So trang
+pageSize  | int   | 20      | So thong bao moi trang
+
+Response Success (200):
+{
+  "success": true,
+  "data": {
+    "unreadCount": 2,
+    "items": [
+      {
+        "notificationId": 1,
+        "type": "SHIPPING",
+        "title": "Don hang dang duoc giao",
+        "message": "Don hang ORD-20260227-0001 dang tren duong giao den ban.",
+        "data": { "orderId": 1, "screen": "ORDER_TRACKING" },
+        "isRead": false,
+        "createdAt": "2026-02-27T10:00:00Z"
+      },
+      {
+        "notificationId": 2,
+        "type": "PAYMENT",
+        "title": "Thanh toan thanh cong",
+        "message": "Don hang ORD-20260227-0001 da thanh toan thanh cong qua SePay.",
+        "data": { "orderId": 1, "screen": "ORDER_DETAIL" },
+        "isRead": true,
+        "createdAt": "2026-02-27T08:05:00Z"
+      }
+    ],
+    "pagination": { "currentPage": 1, "pageSize": 20, "totalItems": 5, "totalPages": 1 }
+  }
+}
+
+Business Logic:
+- Lay userId tu JWT
+- Query Notifications theo UserId, ORDER BY CreatedAt DESC
+- Count unreadCount = WHERE IsRead = false
+- Data JSONB chua thong tin dieu huong man hinh tren mobile
+
+----------------------------------------------------------------
+API 12: Mark Notification as Read
+----------------------------------------------------------------
+Task ID       : BE-4.3.2
+Endpoint      : PUT /api/notifications/{notificationId}/read
+Effort        : 1 hour
+Priority      : High
+Tables        : Notifications
+Auth Required : Yes (All Roles)
+
+Response Success (200):
+{ "success": true, "message": "Da danh dau da doc" }
+
+Business Logic:
+- Verify notificationId thuoc ve userId
+- Set IsRead = true
+
+----------------------------------------------------------------
+API 13: Mark All Notifications as Read
+----------------------------------------------------------------
+Task ID       : BE-4.3.3
+Endpoint      : PUT /api/notifications/read-all
+Effort        : 1 hour
+Priority      : High
+Tables        : Notifications
+Auth Required : Yes (All Roles)
+
+Response Success (200):
+{ "success": true, "message": "Da danh dau tat ca da doc" }
+
+Business Logic:
+- UPDATE Notifications SET IsRead = true WHERE UserId = @userId AND IsRead = false
+
+----------------------------------------------------------------
+API 14: Broadcast Notification (Admin)
+----------------------------------------------------------------
+Task ID       : BE-4.3.4
+Endpoint      : POST /api/admin/notifications/broadcast
+Effort        : 2 hours
+Priority      : Medium
+Tables        : Notifications, Users
+Auth Required : Yes (Admin)
+
+Request Body:
+{
+  "type": "PROMOTION",
+  "title": "Giam 50K cho don tu 500K",
+  "message": "Su dung ma BIGSIZE50K de duoc giam ngay 50,000d. Han den 30/06/2026.",
+  "data": { "voucherCode": "BIGSIZE50K", "screen": "VOUCHER_LIST" }
+}
+
+Response Success (201):
+{
+  "success": true,
+  "message": "Da gui thong bao den 150 khach hang",
+  "data": { "sentCount": 150 }
+}
+
+Business Logic:
+- Verify Role = Admin
+- Lay tat ca Users co Role = 3 (Customer), IsActive = true
+- INSERT Notifications cho tung user (batch insert)
+- Return sentCount
+
+----------------------------------------------------------------
+API 15: Get Users (Admin)
+----------------------------------------------------------------
+Task ID       : BE-4.3.5
+Endpoint      : GET /api/admin/users
+Effort        : 2 hours
+Priority      : High
+Tables        : Users
+Auth Required : Yes (Admin)
+
+(Da dinh nghia o Milestone 1 - BE-1.2.5. Milestone 4 hoan thien them filter va export.)
+
+Query Parameters bo sung:
+Parameter    | Type    | Description
+-------------|---------|----------------------------
+hasBodyProfile | bool? | Filter user co/chua co body profile
+
+----------------------------------------------------------------
+API 16: Change User Role (Admin)
+----------------------------------------------------------------
+Task ID       : BE-4.3.6
+Endpoint      : PUT /api/admin/users/{userId}/role
+Effort        : 2 hours
+Priority      : High
+Tables        : Users
+Auth Required : Yes (Admin)
+
+Request Body:
+{
+  "role": 4
+}
+
+Validation Rules:
+Field | Rules
+------|-------------------------------------------
+role  | Required, integer 1-4
+
+Response Success (200):
+{
+  "success": true,
+  "message": "Da thay doi role thanh cong",
+  "data": { "userId": 5, "newRole": 4, "roleName": "Shipper" }
+}
+
+Business Logic:
+- Verify caller Role = 1 (Admin)
+- Admin KHONG duoc tu thay doi role cua chinh minh
+- Cap nhat Users.Role
+
+----------------------------------------------------------------
+API 17: Activate/Deactivate User (Admin)
+----------------------------------------------------------------
+Task ID       : BE-4.3.7
+Endpoint      : PUT /api/admin/users/{userId}/status
+Effort        : 2 hours
+Priority      : High
+Tables        : Users, RefreshTokens
+Auth Required : Yes (Admin)
+
+Request Body:
+{
+  "isActive": false
+}
+
+Response Success (200):
+{
+  "success": true,
+  "message": "Da khoa tai khoan nguoi dung"
+}
+
+Business Logic:
+- Verify caller Role = Admin
+- Admin khong tu khoa chinh minh
+- Cap nhat Users.IsActive
+- Neu IsActive = false: Revoke tat ca RefreshTokens cua user (buoc logout)
+
+----------------------------------------------------------------
+API 18: Admin Dashboard Statistics
+----------------------------------------------------------------
+Task ID       : BE-4.3.8
+Endpoint      : GET /api/admin/dashboard
+Effort        : 4 hours
+Priority      : Medium
+Tables        : Orders, Users, Products, Payments
+Auth Required : Yes (Admin)
+
+Response Success (200):
+{
+  "success": true,
+  "data": {
+    "overview": {
+      "totalOrders": 156,
+      "totalRevenue": 45680000,
+      "totalCustomers": 89,
+      "totalProducts": 42
+    },
+    "ordersByStatus": {
+      "PENDING": 5,
+      "CONFIRMED": 3,
+      "PROCESSING": 2,
+      "SHIPPING": 8,
+      "DELIVERED": 130,
+      "CANCELLED": 8
+    },
+    "recentOrders": [
+      {
+        "orderId": 156,
+        "orderCode": "ORD-20260227-0156",
+        "customerName": "Tran Thi Lan",
+        "total": 478200,
+        "status": "SHIPPING",
+        "createdAt": "2026-02-27T08:00:00Z"
+      }
+    ],
+    "topProducts": [
+      {
+        "productId": 1,
+        "name": "Ao Thun Oversize Cotton Co Gian 4 Chieu",
+        "soldCount": 340,
+        "revenue": 84660000
+      }
+    ]
+  }
+}
+
+Business Logic:
+- Verify Role = Admin
+- totalRevenue = SUM(Payments.Amount) WHERE Status = 'COMPLETED'
+- totalCustomers = COUNT(Users) WHERE Role = 3
+- ordersByStatus = GROUP BY Status
+- recentOrders = top 5 ORDER BY CreatedAt DESC
+- topProducts = top 5 ORDER BY SoldCount DESC
+
+================================================================
+5. Sprint 4.4: Testing & Bug Fixes
+================================================================
+Timeline: Ngay 7 | Effort: 8h
+
+Task ID: BE-4.4.1
+Effort: 8 hours
+Priority: Critical
+
+Test Checklist - Shipper APIs:
+[ ] GET /api/shipper/orders - chi thay don cua minh
+[ ] GET /api/shipper/orders - filter theo status
+[ ] PUT /api/shipper/orders/{id}/pickup - PROCESSING -> SHIPPING
+[ ] PUT /api/shipper/orders/{id}/pickup - reject neu khong phai PROCESSING
+[ ] PUT /api/shipper/orders/{id}/deliver - SHIPPING -> DELIVERED
+[ ] PUT /api/shipper/orders/{id}/deliver - COD: cap nhat Payment = COMPLETED
+[ ] PUT /api/shipper/orders/{id}/fail - tang DeliveryAttempts
+[ ] PUT /api/shipper/orders/{id}/fail - auto cancel khi attempt >= 3
+[ ] PUT /api/shipper/orders/{id}/fail - hoan tra stock khi auto cancel
+
+Test Checklist - GPS Tracking:
+[ ] POST /api/shipper/location - luu vi tri thanh cong
+[ ] POST /api/shipper/location - reject neu don khong o SHIPPING
+[ ] POST /api/shipper/location - reject neu khong phai shipper cua don
+[ ] GET /api/orders/{id}/tracking - tra ve vi tri moi nhat
+[ ] GET /api/orders/{id}/tracking - reject neu don khong o SHIPPING
+[ ] GET /api/orders/{id}/tracking - reject neu khong phai don cua customer
+
+Test Checklist - AI Chat:
+[ ] POST /api/chat/ai - gui message va nhan AI response
+[ ] POST /api/chat/ai - goi y san pham voi size phu hop
+[ ] POST /api/chat/ai - tao session moi neu sessionId null
+[ ] POST /api/chat/ai - tiep tuc session cu
+[ ] POST /api/chat/ai - xu ly khi chua co body profile
+[ ] GET /api/chat/ai/sessions - danh sach sessions
+[ ] GET /api/chat/ai/sessions/{id} - lich su chat
+[ ] DELETE /api/chat/ai/sessions/{id} - xoa session
+
+Test Checklist - Notifications:
+[ ] GET /api/notifications - tra ve danh sach + unreadCount
+[ ] PUT /api/notifications/{id}/read - danh dau da doc
+[ ] PUT /api/notifications/read-all - danh dau tat ca da doc
+[ ] POST /api/admin/notifications/broadcast - gui den tat ca customer
+
+Test Checklist - Admin:
+[ ] GET /api/admin/users - danh sach users
+[ ] PUT /api/admin/users/{id}/role - thay doi role
+[ ] PUT /api/admin/users/{id}/role - reject tu thay doi chinh minh
+[ ] PUT /api/admin/users/{id}/status - khoa tai khoan
+[ ] PUT /api/admin/users/{id}/status - revoke tokens khi khoa
+[ ] GET /api/admin/dashboard - thong ke dung
+
+Test Checklist - Authorization:
+[ ] Shipper APIs chi Shipper (Role=4) truy cap
+[ ] Tracking API chi Customer cua don hang do
+[ ] Chat AI chi Customer truy cap
+[ ] Admin APIs chi Admin (Role=1) truy cap
+[ ] Broadcast chi Admin
+
+================================================================
+6. Tong Ket Task
+================================================================
+
+Task ID   | Task Name                      | Tables                | Effort | Pri
+----------|--------------------------------|-----------------------|--------|----
+BE-4.1.1  | API: Get Shipper Orders        | Orders                | 2h     | C
+BE-4.1.2  | API: Pickup Order              | Orders                | 2h     | C
+BE-4.1.3  | API: Deliver Order             | Orders, Payments      | 3h     | C
+BE-4.1.4  | API: Delivery Failed           | Orders, Variants      | 3h     | H
+BE-4.1.5  | API: Update GPS Location       | ShipperLocations      | 2h     | C
+BE-4.1.6  | API: Track Order on Map        | ShipperLocations      | 4h     | C
+BE-4.2.1  | API: AI Chat Send Message      | ChatAiHistory, ...    | 6h     | C
+BE-4.2.2  | API: Get Chat Sessions         | ChatAiHistory         | 2h     | H
+BE-4.2.3  | API: Get Session History       | ChatAiHistory         | 2h     | H
+BE-4.2.4  | API: Delete Chat Session       | ChatAiHistory         | 1h     | M
+BE-4.3.1  | API: Get Notifications         | Notifications         | 2h     | C
+BE-4.3.2  | API: Mark as Read              | Notifications         | 1h     | H
+BE-4.3.3  | API: Mark All Read             | Notifications         | 1h     | H
+BE-4.3.4  | API: Broadcast Notification    | Notifications, Users  | 2h     | M
+BE-4.3.5  | API: Admin Get Users           | Users                 | 2h     | H
+BE-4.3.6  | API: Change User Role          | Users                 | 2h     | H
+BE-4.3.7  | API: Activate/Deactivate User  | Users, RefreshTokens  | 2h     | H
+BE-4.3.8  | API: Admin Dashboard           | Orders, Users, ...    | 4h     | M
+BE-4.4.1  | Testing & Bug Fixes            | -                     | 8h     | C
+
+Priority: C = Critical, H = High, M = Medium
+Total Effort: 51 hours
+
+API Endpoints Summary:
+
+Method | Endpoint                               | Auth     | Description
+-------|----------------------------------------|----------|-----------------------------------
+GET    | /api/shipper/orders                    | Shipper  | Don hang cua shipper
+PUT    | /api/shipper/orders/{id}/pickup        | Shipper  | Bat dau giao hang
+PUT    | /api/shipper/orders/{id}/deliver       | Shipper  | Xac nhan giao thanh cong
+PUT    | /api/shipper/orders/{id}/fail          | Shipper  | Giao hang that bai
+POST   | /api/shipper/location                  | Shipper  | Cap nhat vi tri GPS
+GET    | /api/orders/{id}/tracking              | Customer | Theo doi shipper tren map
+POST   | /api/chat/ai                           | Customer | Gui tin nhan cho AI
+GET    | /api/chat/ai/sessions                  | Customer | Danh sach phien chat
+GET    | /api/chat/ai/sessions/{sessionId}      | Customer | Lich su chat
+DELETE | /api/chat/ai/sessions/{sessionId}      | Customer | Xoa phien chat
+GET    | /api/notifications                     | All      | Danh sach thong bao
+PUT    | /api/notifications/{id}/read           | All      | Danh dau da doc
+PUT    | /api/notifications/read-all            | All      | Doc tat ca
+POST   | /api/admin/notifications/broadcast     | Admin    | Gui thong bao hang loat
+GET    | /api/admin/users                       | Admin    | Danh sach nguoi dung
+PUT    | /api/admin/users/{id}/role             | Admin    | Thay doi role
+PUT    | /api/admin/users/{id}/status           | Admin    | Khoa/Mo khoa tai khoan
+GET    | /api/admin/dashboard                   | Admin    | Thong ke tong quan
+
+--- END OF MILESTONE 4 ---

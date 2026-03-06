@@ -1,0 +1,1048 @@
+MILESTONE 2
+BACKEND TASK DOCUMENT
+Product Catalog & Shopping Cart
+Timeline: Week 2 (7 days)
+Version: 1.0 | February 2026
+
+================================================================
+1. Tong Quan Milestone 2
+================================================================
+
+1.1 Muc Tieu
+- Xay dung APIs Product Browsing (list, detail, search, filter, sort)
+- Xay dung APIs Product Variants, Images, Size Guide
+- Xay dung APIs Size Recommendation (AI Fit-Check) - Dac thu Big Size
+- Xay dung APIs Shopping Cart (CRUD)
+- Xay dung APIs Wishlist va Validate Voucher
+
+1.2 Timeline
+
+Ngay  | Sprint      | Noi dung
+------|------------|------------------------------------------
+1-2   | Sprint 2.1 | Product Browsing APIs
+3-4   | Sprint 2.2 | Product Detail & Size Guide APIs
+5-6   | Sprint 2.3 | Shopping Cart & Wishlist APIs
+7     | Sprint 2.4 | Testing & Bug Fixes
+
+1.3 Tables Su Dung Trong Milestone 2
+
+Table            | Muc dich
+-----------------|------------------------------------------
+Categories       | Danh muc san pham (co phan cap cha-con)
+Products         | Thong tin san pham chinh (gom BrandName, Tags)
+ProductVariants  | Bien the theo Size/Mau voi ton kho
+SizeGuides       | Bang thong so size (phuc vu AI Fit-Check)
+ProductImages    | Nhieu hinh anh cho moi san pham
+CartItems        | San pham trong gio hang (gop tu bang Carts)
+Wishlists        | San pham yeu thich
+Vouchers         | Ma giam gia
+UserBodyProfiles | So do co the (cho Size Recommendation)
+
+================================================================
+2. Sprint 2.1: Product Browsing APIs
+================================================================
+Timeline: Ngay 1-2 | Effort: 13h
+
+----------------------------------------------------------------
+API 1: Get Categories List
+----------------------------------------------------------------
+Task ID       : BE-2.1.1
+Endpoint      : GET /api/categories
+Effort        : 2 hours
+Priority      : Critical
+Tables        : Categories, Products
+Auth Required : No (Public API)
+
+Response Success (200):
+{
+  "success": true,
+  "data": [
+    {
+      "categoryId": 1,
+      "name": "Thoi trang Nam",
+      "slug": "thoi-trang-nam",
+      "imageUrl": "https://res.cloudinary.com/bigsize/cat-nam.jpg",
+      "parentId": null,
+      "children": [
+        {
+          "categoryId": 4,
+          "name": "Ao Nam",
+          "slug": "ao-nam",
+          "imageUrl": "https://res.cloudinary.com/bigsize/cat-ao-nam.jpg",
+          "parentId": 1,
+          "productCount": 15
+        },
+        {
+          "categoryId": 5,
+          "name": "Quan Nam",
+          "slug": "quan-nam",
+          "imageUrl": "https://res.cloudinary.com/bigsize/cat-quan-nam.jpg",
+          "parentId": 1,
+          "productCount": 12
+        }
+      ],
+      "productCount": 27
+    },
+    {
+      "categoryId": 2,
+      "name": "Thoi trang Nu",
+      "slug": "thoi-trang-nu",
+      "imageUrl": "https://res.cloudinary.com/bigsize/cat-nu.jpg",
+      "parentId": null,
+      "children": [
+        {
+          "categoryId": 6,
+          "name": "Ao Nu",
+          "slug": "ao-nu",
+          "parentId": 2,
+          "productCount": 18
+        }
+      ],
+      "productCount": 30
+    }
+  ]
+}
+
+Business Logic:
+- Lay tat ca Categories co IsActive = true
+- Xay dung cay phan cap (ParentId)
+- Count so Products con hang trong moi category
+- Chi count products co IsActive = true, IsDeleted = false
+
+SQL Query Structure:
+SELECT c.*, COUNT(p."Id") as product_count
+FROM "Categories" c
+LEFT JOIN "Products" p ON p."CategoryId" = c."Id" AND p."IsActive" = true AND p."IsDeleted" = false
+WHERE c."IsActive" = true
+GROUP BY c."Id"
+ORDER BY c."SortOrder";
+
+----------------------------------------------------------------
+API 2: Get Products List
+----------------------------------------------------------------
+Task ID       : BE-2.1.2
+Endpoint      : GET /api/products
+Effort        : 5 hours
+Priority      : Critical
+Tables        : Products, Categories, ProductVariants, ProductImages
+Auth Required : No (Public API)
+
+Query Parameters:
+Parameter   | Type     | Default   | Description
+------------|----------|-----------|-----------------------------------
+page        | int      | 1         | So trang (bat dau tu 1)
+pageSize    | int      | 12        | So san pham moi trang (max 50)
+categoryId  | int?     | null      | Filter theo danh muc
+gender      | string?  | null      | Filter: MALE, FEMALE, UNISEX
+search      | string?  | null      | Tim kiem theo ten san pham
+tags        | string?  | null      | Filter theo tags, VD: "Giau bung"
+minPrice    | decimal? | null      | Gia toi thieu (VND)
+maxPrice    | decimal? | null      | Gia toi da (VND)
+sortBy      | string   | createdAt | price, name, createdAt, soldCount
+sortOrder   | string   | desc      | asc hoac desc
+isFeatured  | bool?    | null      | Chi san pham noi bat
+
+Example Request:
+GET /api/products?page=1&pageSize=12&gender=FEMALE&tags=Giau+bung&sortBy=soldCount&sortOrder=desc
+
+Response Success (200):
+{
+  "success": true,
+  "data": {
+    "items": [
+      {
+        "productId": 3,
+        "name": "Dam Suong Big Size Giau Bung Thanh Lich",
+        "slug": "dam-suong-big-size-giau-bung-thanh-lich",
+        "price": 599000,
+        "salePrice": 499000,
+        "gender": "FEMALE",
+        "brandName": "MiuMiu Plus",
+        "tags": ["Giau bung", "Ton vong 3", "Form A-line"],
+        "primaryImage": "https://res.cloudinary.com/bigsize/dam-suong-den-1.jpg",
+        "category": {
+          "categoryId": 6,
+          "name": "Ao Nu"
+        },
+        "averageRating": 4.8,
+        "totalReviews": 15,
+        "soldCount": 120,
+        "inStock": true,
+        "isFeatured": true,
+        "availableSizes": ["XL", "2XL", "3XL"]
+      }
+    ],
+    "pagination": {
+      "currentPage": 1,
+      "pageSize": 12,
+      "totalItems": 45,
+      "totalPages": 4,
+      "hasNext": true,
+      "hasPrevious": false
+    }
+  }
+}
+
+Business Logic:
+- Chi lay Products co IsActive = true, IsDeleted = false
+- Join Categories de lay category name
+- Lay primary image tu ProductImages (IsPrimary = true)
+- Lay availableSizes tu ProductVariants (IsActive, StockQuantity > 0)
+- Tags filter: dung PostgreSQL array operator @> hoac ANY
+- Search: ILIKE '%keyword%' tren truong Name
+- inStock = true neu co it nhat 1 variant con hang
+- Pagination: OFFSET + LIMIT
+
+SQL Query Structure:
+SELECT p.*,
+  (SELECT "ImageUrl" FROM "ProductImages" WHERE "ProductId" = p."Id" AND "IsPrimary" = true LIMIT 1) as primary_image,
+  ARRAY(SELECT DISTINCT "Size" FROM "ProductVariants" WHERE "ProductId" = p."Id" AND "IsActive" = true AND "StockQuantity" > 0) as available_sizes,
+  c."Name" as category_name
+FROM "Products" p
+LEFT JOIN "Categories" c ON p."CategoryId" = c."Id"
+WHERE p."IsActive" = true AND p."IsDeleted" = false
+  AND (@categoryId IS NULL OR p."CategoryId" = @categoryId)
+  AND (@gender IS NULL OR p."Gender" = @gender)
+  AND (@search IS NULL OR p."Name" ILIKE '%' || @search || '%')
+  AND (@tags IS NULL OR p."Tags" @> ARRAY[@tags])
+  AND (@minPrice IS NULL OR COALESCE(p."SalePrice", p."Price") >= @minPrice)
+  AND (@maxPrice IS NULL OR COALESCE(p."SalePrice", p."Price") <= @maxPrice)
+  AND (@isFeatured IS NULL OR p."IsFeatured" = @isFeatured)
+ORDER BY p.{sortBy} {sortOrder}
+OFFSET (@page - 1) * @pageSize LIMIT @pageSize;
+
+----------------------------------------------------------------
+API 3: Search Products (Autocomplete)
+----------------------------------------------------------------
+Task ID       : BE-2.1.3
+Endpoint      : GET /api/products/search
+Effort        : 3 hours
+Priority      : Critical
+Tables        : Products, ProductImages
+Auth Required : No (Public API)
+
+Query Parameters:
+Parameter | Type   | Description
+----------|--------|-------------------------------
+q         | string | Tu khoa tim kiem (required, min 2 chars)
+limit     | int    | So ket qua (default: 10, max: 20)
+
+Example Request:
+GET /api/products/search?q=ao+thun&limit=5
+
+Response Success (200):
+{
+  "success": true,
+  "data": [
+    {
+      "productId": 1,
+      "name": "Ao Thun Oversize Cotton Co Gian 4 Chieu",
+      "slug": "ao-thun-oversize-cotton-co-gian-4-chieu",
+      "price": 299000,
+      "salePrice": 249000,
+      "primaryImage": "https://res.cloudinary.com/bigsize/ao-thun-oversize-den-1.jpg"
+    }
+  ]
+}
+
+Business Logic:
+- Tim kiem trong: Name, Description, BrandName
+- ILIKE cho case-insensitive
+- Chi Products IsActive = true, IsDeleted = false
+- Dung cho autocomplete/suggestion tren mobile
+
+----------------------------------------------------------------
+API 4: Get Products by Category
+----------------------------------------------------------------
+Task ID       : BE-2.1.4
+Endpoint      : GET /api/categories/{categoryId}/products
+Effort        : 3 hours
+Priority      : High
+Tables        : Products, Categories, ProductImages, ProductVariants
+Auth Required : No (Public API)
+
+Path Parameters:
+categoryId: ID cua category (required)
+
+Query Parameters: Giong API Get Products List
+
+Response: Giong API Get Products List, chi tra ve products trong category do
+
+Response Error (404):
+{
+  "success": false,
+  "message": "Danh muc khong ton tai"
+}
+
+Business Logic:
+- Verify categoryId ton tai va IsActive = true
+- Neu category co children (ParentId): lay products cua tat ca category con
+- Response giong API Products List
+
+================================================================
+3. Sprint 2.2: Product Detail & Size Guide APIs
+================================================================
+Timeline: Ngay 3-4 | Effort: 16h
+
+----------------------------------------------------------------
+API 5: Get Product Detail
+----------------------------------------------------------------
+Task ID       : BE-2.2.1
+Endpoint      : GET /api/products/{productId}
+Effort        : 4 hours
+Priority      : Critical
+Tables        : Products, Categories, ProductVariants, ProductImages, SizeGuides
+Auth Required : No (Public API)
+
+Response Success (200):
+{
+  "success": true,
+  "data": {
+    "productId": 1,
+    "name": "Ao Thun Oversize Cotton Co Gian 4 Chieu",
+    "slug": "ao-thun-oversize-cotton-co-gian-4-chieu",
+    "description": "Ao thun big size nam oversize, chat cotton co gian 4 chieu thoang mat",
+    "detailDescription": "Ao thun big size danh rieng cho anh em co than hinh lon...",
+    "material": "Cotton 95%, Spandex 5%",
+    "careInstructions": "Giat may o 30C, khong dung thuoc tay, phoi trong bong ram",
+    "gender": "MALE",
+    "brandName": "BigBro",
+    "tags": ["Giau bung", "Co gian x4", "Oversize"],
+    "price": 299000,
+    "salePrice": 249000,
+    "category": {
+      "categoryId": 4,
+      "name": "Ao Nam"
+    },
+    "images": [
+      { "imageId": 1, "imageUrl": "https://res.cloudinary.com/bigsize/ao-thun-oversize-den-1.jpg", "isPrimary": true, "sortOrder": 1 },
+      { "imageId": 2, "imageUrl": "https://res.cloudinary.com/bigsize/ao-thun-oversize-den-2.jpg", "isPrimary": false, "sortOrder": 2 }
+    ],
+    "variants": [
+      { "variantId": 1, "sku": "AT-OVS-DEN-XL",  "size": "XL",  "color": "Den",   "stockQuantity": 50, "priceAdjustment": 0 },
+      { "variantId": 2, "sku": "AT-OVS-DEN-2XL", "size": "2XL", "color": "Den",   "stockQuantity": 40, "priceAdjustment": 0 },
+      { "variantId": 3, "sku": "AT-OVS-DEN-3XL", "size": "3XL", "color": "Den",   "stockQuantity": 30, "priceAdjustment": 20000 },
+      { "variantId": 4, "sku": "AT-OVS-DEN-4XL", "size": "4XL", "color": "Den",   "stockQuantity": 20, "priceAdjustment": 40000 }
+    ],
+    "hasSizeGuide": true,
+    "averageRating": 4.5,
+    "totalReviews": 23,
+    "viewCount": 1250,
+    "soldCount": 340,
+    "inStock": true,
+    "isFeatured": true,
+    "createdAt": "2026-01-15T08:00:00Z"
+  }
+}
+
+Response Error (404):
+{
+  "success": false,
+  "message": "San pham khong ton tai"
+}
+
+Business Logic:
+- Verify productId ton tai, IsActive = true, IsDeleted = false
+- Join Categories, ProductImages, ProductVariants
+- Check co SizeGuides cho product nay khong (hasSizeGuide)
+- Tang ViewCount + 1
+- Return full product info
+
+----------------------------------------------------------------
+API 6: Get Product Variants
+----------------------------------------------------------------
+Task ID       : BE-2.2.2
+Endpoint      : GET /api/products/{productId}/variants
+Effort        : 2 hours
+Priority      : High
+Tables        : ProductVariants
+Auth Required : No (Public API)
+
+Response Success (200):
+{
+  "success": true,
+  "data": {
+    "colors": ["Den", "Trang"],
+    "sizes": ["XL", "2XL", "3XL", "4XL"],
+    "variants": [
+      { "variantId": 1, "size": "XL",  "color": "Den",   "sku": "AT-OVS-DEN-XL",  "stockQuantity": 50, "priceAdjustment": 0,     "inStock": true },
+      { "variantId": 2, "size": "2XL", "color": "Den",   "sku": "AT-OVS-DEN-2XL", "stockQuantity": 40, "priceAdjustment": 0,     "inStock": true },
+      { "variantId": 3, "size": "3XL", "color": "Den",   "sku": "AT-OVS-DEN-3XL", "stockQuantity": 30, "priceAdjustment": 20000, "inStock": true },
+      { "variantId": 4, "size": "4XL", "color": "Den",   "sku": "AT-OVS-DEN-4XL", "stockQuantity": 20, "priceAdjustment": 40000, "inStock": true },
+      { "variantId": 5, "size": "XL",  "color": "Trang", "sku": "AT-OVS-TRG-XL",  "stockQuantity": 45, "priceAdjustment": 0,     "inStock": true }
+    ]
+  }
+}
+
+Business Logic:
+- Lay tat ca ProductVariants co IsActive = true theo productId
+- Trich xuat danh sach unique colors va sizes
+- inStock = stockQuantity > 0
+
+----------------------------------------------------------------
+API 7: Get Product Images
+----------------------------------------------------------------
+Task ID       : BE-2.2.3
+Endpoint      : GET /api/products/{productId}/images
+Effort        : 1 hour
+Priority      : High
+Tables        : ProductImages
+Auth Required : No (Public API)
+
+Response Success (200):
+{
+  "success": true,
+  "data": [
+    { "imageId": 1, "imageUrl": "https://res.cloudinary.com/bigsize/ao-thun-oversize-den-1.jpg", "altText": "Ao thun oversize den mat truoc", "isPrimary": true, "sortOrder": 1 },
+    { "imageId": 2, "imageUrl": "https://res.cloudinary.com/bigsize/ao-thun-oversize-den-2.jpg", "altText": "Ao thun oversize den mat sau", "isPrimary": false, "sortOrder": 2 }
+  ]
+}
+
+Business Logic:
+- Verify productId ton tai
+- Lay tat ca images, ORDER BY SortOrder ASC
+
+----------------------------------------------------------------
+API 8: Get Size Guide
+----------------------------------------------------------------
+Task ID       : BE-2.2.4
+Endpoint      : GET /api/products/{productId}/size-guide
+Effort        : 2 hours
+Priority      : Critical
+Tables        : SizeGuides
+Auth Required : No (Public API)
+
+Response Success (200):
+{
+  "success": true,
+  "data": [
+    {
+      "sizeName": "XL",
+      "bodyMeasurements": {
+        "bust":   { "min": 96.0,  "max": 104.0 },
+        "waist":  { "min": 82.0,  "max": 90.0 },
+        "hips":   { "min": 96.0,  "max": 104.0 },
+        "weight": { "min": 70.0,  "max": 85.0 }
+      },
+      "garmentMeasurements": {
+        "chestCm": 114.0,
+        "waistCm": 108.0,
+        "hipCm": 110.0,
+        "shoulderCm": 48.0,
+        "lengthCm": 72.0,
+        "sleeveCm": 22.0
+      }
+    },
+    {
+      "sizeName": "2XL",
+      "bodyMeasurements": {
+        "bust":   { "min": 104.0, "max": 112.0 },
+        "waist":  { "min": 90.0,  "max": 98.0 },
+        "hips":   { "min": 104.0, "max": 112.0 },
+        "weight": { "min": 85.0,  "max": 100.0 }
+      },
+      "garmentMeasurements": {
+        "chestCm": 120.0,
+        "waistCm": 114.0,
+        "hipCm": 116.0,
+        "shoulderCm": 50.0,
+        "lengthCm": 74.0,
+        "sleeveCm": 23.0
+      }
+    }
+  ]
+}
+
+Business Logic:
+- Verify productId ton tai
+- Lay tat ca SizeGuides theo productId
+- Day la tinh nang DAC THU BIG SIZE
+- Data nay giup khach hang chon size va phuc vu AI Fit-Check
+
+----------------------------------------------------------------
+API 9: Recommend Size (AI Fit-Check)
+----------------------------------------------------------------
+Task ID       : BE-2.2.5
+Endpoint      : GET /api/products/{productId}/recommend-size
+Effort        : 4 hours
+Priority      : Critical
+Tables        : SizeGuides, UserBodyProfiles, ProductVariants
+Auth Required : Yes (Customer)
+
+*** DAY LA TINH NANG COT LOI CUA DU AN BIG SIZE ***
+
+Response Success (200):
+{
+  "success": true,
+  "data": {
+    "recommendedSize": "2XL",
+    "fitScore": 92,
+    "fitLevel": "Rất phù hợp",
+    "userProfile": {
+      "bust": 105.0,
+      "waist": 90.0,
+      "hips": 110.0,
+      "weight": 85.0
+    },
+    "sizeComparison": [
+      {
+        "sizeName": "XL",
+        "fitScore": 45,
+        "fitLevel": "Chat",
+        "details": "Vong nguc vuot 1cm, vong hong vuot 6cm so voi size XL",
+        "inStock": true
+      },
+      {
+        "sizeName": "2XL",
+        "fitScore": 92,
+        "fitLevel": "Rat phu hop",
+        "details": "So do nam trong khoang chuan cua size 2XL. Vua van voi so thich Regular.",
+        "inStock": true
+      },
+      {
+        "sizeName": "3XL",
+        "fitScore": 70,
+        "fitLevel": "Hoi rong",
+        "details": "Size 3XL se rong hon 5-8cm o vung eo va hong",
+        "inStock": true
+      }
+    ],
+    "suggestion": "Voi so do 105/90/110 va can nang 85kg, size 2XL la lua chon tot nhat cho ban. Ao vua van, thoai mai va giau bung hieu qua."
+  }
+}
+
+Response Error (400) - Chua co Body Profile:
+{
+  "success": false,
+  "message": "Ban chua nhap ho so so do. Vui long cap nhat Body Profile truoc de AI tu van size chinh xac.",
+  "data": { "redirectTo": "/profile/body" }
+}
+
+Response Error (404) - San pham khong co Size Guide:
+{
+  "success": false,
+  "message": "San pham nay chua co bang thong so size"
+}
+
+Business Logic:
+- Lay userId tu JWT token
+- Check UserBodyProfiles ton tai, neu khong: return 400
+- Check SizeGuides ton tai cho productId, neu khong: return 404
+- THUAT TOAN FIT-CHECK:
+  1. Lay so do user: Bust, Waist, Hips, Weight
+  2. Voi moi SizeName trong SizeGuides:
+     a. Check Bust nam trong MinBust - MaxBust
+     b. Check Waist nam trong MinWaist - MaxWaist
+     c. Check Hips nam trong MinHips - MaxHips
+     d. Check Weight nam trong MinWeight - MaxWeight
+     e. Tinh fitScore = % so chi so nam trong khoang
+  3. Xet FitPreference (Tight/Regular/Loose):
+     - Tight: uu tien size nho hon
+     - Regular: uu tien size vua khop
+     - Loose: uu tien size lon hon
+  4. Sap xep theo fitScore DESC, lay size dau tien lam recommendedSize
+  5. Tao suggestion text mo ta ket qua
+- Check ton kho (ProductVariants) de hien thi inStock
+
+----------------------------------------------------------------
+API 10: Get Product Reviews
+----------------------------------------------------------------
+Task ID       : BE-2.2.6
+Endpoint      : GET /api/products/{productId}/reviews
+Effort        : 3 hours
+Priority      : Medium
+Tables        : ProductReviews, Users
+Auth Required : No (Public API)
+
+Query Parameters:
+Parameter | Type  | Default   | Description
+----------|-------|-----------|----------------------------
+page      | int   | 1         | So trang
+pageSize  | int   | 10        | So review moi trang
+rating    | int?  | null      | Filter theo rating (1-5)
+sortBy    | string| createdAt | createdAt hoac rating
+
+Response Success (200):
+{
+  "success": true,
+  "data": {
+    "summary": {
+      "averageRating": 4.5,
+      "totalReviews": 23,
+      "ratingDistribution": { "5": 12, "4": 8, "3": 2, "2": 1, "1": 0 }
+    },
+    "reviews": [
+      {
+        "reviewId": 1,
+        "rating": 5,
+        "comment": "Ao mac rat thoai mai, co gian tot. Minh 178cm/110kg mac 3XL vua dep, giau bung hieu qua!",
+        "reviewImageUrl": "https://res.cloudinary.com/bigsize/review-1.jpg",
+        "sizeOrdered": "3XL",
+        "bodyInfo": {
+          "heightCm": 178.0,
+          "weightKg": 110.0,
+          "showBodyInfo": true
+        },
+        "user": {
+          "userId": 4,
+          "fullName": "Le Van Hung",
+          "avatarUrl": null
+        },
+        "createdAt": "2026-02-20T15:00:00Z"
+      }
+    ],
+    "pagination": { "currentPage": 1, "pageSize": 10, "totalItems": 23, "totalPages": 3 }
+  }
+}
+
+Business Logic:
+- Verify productId ton tai
+- Join Users de lay fullName, avatarUrl (KHONG lay email, phone)
+- Chi hien thi HeightCm, WeightKg khi ShowBodyInfo = true
+- Tinh ratingDistribution: COUNT GROUP BY Rating
+- Day la tinh nang dac thu Big Size: reviewer chia se so do de nguoi khac tham khao
+
+================================================================
+4. Sprint 2.3: Shopping Cart & Wishlist APIs
+================================================================
+Timeline: Ngay 5-6 | Effort: 16h
+
+----------------------------------------------------------------
+API 11: Get Cart
+----------------------------------------------------------------
+Task ID       : BE-2.3.1
+Endpoint      : GET /api/cart
+Effort        : 3 hours
+Priority      : Critical
+Tables        : CartItems, ProductVariants, Products, ProductImages
+Auth Required : Yes (Customer)
+
+Response Success (200):
+{
+  "success": true,
+  "data": {
+    "items": [
+      {
+        "cartItemId": 1,
+        "quantity": 2,
+        "variant": {
+          "variantId": 2,
+          "sku": "AT-OVS-DEN-2XL",
+          "size": "2XL",
+          "color": "Den"
+        },
+        "product": {
+          "productId": 1,
+          "name": "Ao Thun Oversize Cotton Co Gian 4 Chieu",
+          "price": 299000,
+          "salePrice": 249000,
+          "primaryImage": "https://res.cloudinary.com/bigsize/ao-thun-oversize-den-1.jpg",
+          "inStock": true,
+          "stockQuantity": 40
+        },
+        "priceAdjustment": 0,
+        "unitPrice": 249000,
+        "itemTotal": 498000
+      }
+    ],
+    "summary": {
+      "totalItems": 2,
+      "subtotal": 498000,
+      "shippingFee": 30000,
+      "discount": 0,
+      "total": 528000
+    }
+  }
+}
+
+Business Logic:
+- Lay userId tu JWT token
+- Query CartItems theo UserId
+- Join ProductVariants + Products + ProductImages
+- unitPrice = COALESCE(SalePrice, Price) + PriceAdjustment
+- itemTotal = unitPrice * quantity
+- subtotal = SUM(itemTotal)
+- shippingFee = 30000 (fixed)
+- total = subtotal + shippingFee - discount
+- Check moi item con hang (StockQuantity >= Quantity)
+
+----------------------------------------------------------------
+API 12: Add to Cart
+----------------------------------------------------------------
+Task ID       : BE-2.3.2
+Endpoint      : POST /api/cart/items
+Effort        : 4 hours
+Priority      : Critical
+Tables        : CartItems, ProductVariants
+Auth Required : Yes (Customer)
+
+Request Body:
+{
+  "productVariantId": 2,
+  "quantity": 2
+}
+
+Validation Rules:
+Field             | Rules
+------------------|-------------------------------------------
+productVariantId  | Required, must exist, must be active
+quantity          | Required, integer >= 1
+
+Response Success (201):
+{
+  "success": true,
+  "message": "Da them san pham vao gio hang",
+  "data": {
+    "cartItemId": 5,
+    "productVariantId": 2,
+    "quantity": 2,
+    "unitPrice": 249000,
+    "itemTotal": 498000
+  }
+}
+
+Response Error (400) - Het hang:
+{
+  "success": false,
+  "message": "San pham da het hang"
+}
+
+Response Error (400) - Vuot ton kho:
+{
+  "success": false,
+  "message": "So luong yeu cau vuot qua ton kho",
+  "data": { "availableQuantity": 5 }
+}
+
+Business Logic:
+- Validate productVariantId ton tai va IsActive = true
+- Check StockQuantity >= requested quantity
+- Neu variant DA co trong cart (UNIQUE UserId+ProductVariantId):
+  UPDATE quantity (cong them), check tong quantity <= StockQuantity
+- Neu variant CHUA co trong cart: INSERT moi
+
+SQL Query Structure:
+INSERT INTO "CartItems" ("UserId","ProductVariantId","Quantity")
+VALUES (@userId, @variantId, @quantity)
+ON CONFLICT ("UserId","ProductVariantId")
+DO UPDATE SET "Quantity" = "CartItems"."Quantity" + @quantity;
+
+----------------------------------------------------------------
+API 13: Update Cart Item Quantity
+----------------------------------------------------------------
+Task ID       : BE-2.3.3
+Endpoint      : PUT /api/cart/items/{cartItemId}
+Effort        : 2 hours
+Priority      : Critical
+Tables        : CartItems, ProductVariants
+Auth Required : Yes (Customer)
+
+Request Body:
+{
+  "quantity": 3
+}
+
+Response Success (200):
+{
+  "success": true,
+  "message": "Da cap nhat so luong",
+  "data": { "cartItemId": 5, "quantity": 3, "itemTotal": 747000 }
+}
+
+Business Logic:
+- Verify cartItemId thuoc ve user hien tai
+- Check new quantity <= StockQuantity
+- Neu quantity = 0: xoa cart item
+- Update CartItems.Quantity
+
+----------------------------------------------------------------
+API 14: Remove Cart Item
+----------------------------------------------------------------
+Task ID       : BE-2.3.4
+Endpoint      : DELETE /api/cart/items/{cartItemId}
+Effort        : 1 hour
+Priority      : Critical
+Tables        : CartItems
+Auth Required : Yes (Customer)
+
+Response Success (200):
+{
+  "success": true,
+  "message": "Da xoa san pham khoi gio hang"
+}
+
+Business Logic:
+- Verify cartItemId thuoc ve user hien tai
+- DELETE record tu CartItems
+- Return 404 neu khong tim thay
+
+----------------------------------------------------------------
+API 15: Clear Cart
+----------------------------------------------------------------
+Task ID       : BE-2.3.5
+Endpoint      : DELETE /api/cart
+Effort        : 1 hour
+Priority      : High
+Tables        : CartItems
+Auth Required : Yes (Customer)
+
+Response Success (200):
+{
+  "success": true,
+  "message": "Da xoa toan bo gio hang"
+}
+
+Business Logic:
+- DELETE all CartItems WHERE UserId = @userId
+
+----------------------------------------------------------------
+API 16: Validate Voucher
+----------------------------------------------------------------
+Task ID       : BE-2.3.6
+Endpoint      : POST /api/vouchers/validate
+Effort        : 3 hours
+Priority      : Medium
+Tables        : Vouchers, CartItems, Products, ProductVariants
+Auth Required : Yes (Customer)
+
+Request Body:
+{
+  "voucherCode": "WELCOME10"
+}
+
+Response Success (200):
+{
+  "success": true,
+  "data": {
+    "voucherId": 1,
+    "code": "WELCOME10",
+    "description": "Giam 10% cho don dau tien",
+    "discountType": "PERCENTAGE",
+    "discountValue": 10,
+    "calculatedDiscount": 49800,
+    "maxDiscountAmount": 100000,
+    "cartSubtotal": 498000,
+    "newTotal": 478200,
+    "message": "Ap dung thanh cong: Giam 10%"
+  }
+}
+
+Response Error (400) - Ma khong ton tai:
+{ "success": false, "message": "Ma giam gia khong hop le" }
+
+Response Error (400) - Het han:
+{ "success": false, "message": "Ma giam gia da het han" }
+
+Response Error (400) - Chua dat don toi thieu:
+{
+  "success": false,
+  "message": "Don hang toi thieu 500,000d de su dung ma nay",
+  "data": { "minOrderAmount": 500000, "currentSubtotal": 350000 }
+}
+
+Business Logic:
+- Tim Vouchers theo Code
+- Check: IsActive, StartDate <= NOW <= EndDate, UsedCount < UsageLimit
+- Tinh subtotal tu CartItems cua user
+- Check subtotal >= MinOrderAmount
+- Tinh discount:
+  PERCENTAGE: discount = subtotal * DiscountValue / 100 (cap MaxDiscountAmount)
+  FIXED_AMOUNT: discount = DiscountValue
+- Return calculated discount va newTotal
+
+Voucher Validation Checklist:
+# | Check                        | Error Message
+--|------------------------------|-----------------------------------
+1 | Voucher ton tai              | Ma giam gia khong hop le
+2 | IsActive = true              | Ma giam gia khong hop le
+3 | StartDate <= NOW             | Ma giam gia chua co hieu luc
+4 | EndDate >= NOW               | Ma giam gia da het han
+5 | UsedCount < UsageLimit       | Ma giam gia da het luot su dung
+6 | subtotal >= MinOrderAmount   | Don hang toi thieu X de su dung
+
+----------------------------------------------------------------
+API 17: Get Wishlists
+----------------------------------------------------------------
+Task ID       : BE-2.3.7
+Endpoint      : GET /api/wishlists
+Effort        : 2 hours
+Priority      : Medium
+Tables        : Wishlists, Products, ProductImages
+Auth Required : Yes (Customer)
+
+Response Success (200):
+{
+  "success": true,
+  "data": [
+    {
+      "productId": 3,
+      "name": "Dam Suong Big Size Giau Bung Thanh Lich",
+      "price": 599000,
+      "salePrice": 499000,
+      "primaryImage": "https://res.cloudinary.com/bigsize/dam-suong-den-1.jpg",
+      "inStock": true,
+      "addedAt": "2026-02-20T10:00:00Z"
+    }
+  ]
+}
+
+Business Logic:
+- Lay userId tu JWT
+- Join Products + ProductImages
+- Chi hien thi products con IsActive, IsDeleted = false
+
+----------------------------------------------------------------
+API 18: Add to Wishlist
+----------------------------------------------------------------
+Task ID       : BE-2.3.8
+Endpoint      : POST /api/wishlists
+Effort        : 1 hour
+Priority      : Medium
+Tables        : Wishlists
+Auth Required : Yes (Customer)
+
+Request Body:
+{
+  "productId": 3
+}
+
+Response Success (201):
+{ "success": true, "message": "Da them vao danh sach yeu thich" }
+
+Response Error (409):
+{ "success": false, "message": "San pham da co trong danh sach yeu thich" }
+
+Business Logic:
+- Check productId ton tai
+- Check UNIQUE(UserId, ProductId), neu da co: return 409
+- INSERT Wishlists
+
+----------------------------------------------------------------
+API 19: Remove from Wishlist
+----------------------------------------------------------------
+Task ID       : BE-2.3.9
+Endpoint      : DELETE /api/wishlists/{productId}
+Effort        : 1 hour
+Priority      : Medium
+Tables        : Wishlists
+Auth Required : Yes (Customer)
+
+Response Success (200):
+{ "success": true, "message": "Da xoa khoi danh sach yeu thich" }
+
+Business Logic:
+- DELETE Wishlists WHERE UserId = @userId AND ProductId = @productId
+
+================================================================
+5. Sprint 2.4: Testing & Bug Fixes
+================================================================
+Timeline: Ngay 7 | Effort: 8h
+
+Task ID: BE-2.4.1
+Effort: 8 hours
+Priority: Critical
+
+Test Checklist - Product APIs:
+[ ] GET /api/categories - tra ve cay phan cap dung
+[ ] GET /api/products - pagination hoat dong
+[ ] GET /api/products - filter by gender (MALE/FEMALE/UNISEX)
+[ ] GET /api/products - filter by categoryId
+[ ] GET /api/products - filter by tags ("Giau bung")
+[ ] GET /api/products - filter by price range
+[ ] GET /api/products - search by name
+[ ] GET /api/products - sort by price, soldCount, createdAt
+[ ] GET /api/products - combined filters
+[ ] GET /api/products/search - autocomplete hoat dong
+[ ] GET /api/categories/{id}/products - filter by category
+[ ] GET /api/products/{id} - tra ve full detail
+[ ] GET /api/products/{id} - tang ViewCount
+[ ] GET /api/products/{id} - return 404 neu khong ton tai
+[ ] GET /api/products/{id}/variants - tra ve tat ca variants
+[ ] GET /api/products/{id}/images - tra ve tat ca images
+[ ] GET /api/products/{id}/size-guide - tra ve bang size
+[ ] GET /api/products/{id}/recommend-size - goi y size dung
+[ ] GET /api/products/{id}/recommend-size - reject neu chua co body profile
+[ ] GET /api/products/{id}/reviews - pagination + rating filter
+
+Test Checklist - Cart APIs:
+[ ] GET /api/cart - tra ve empty cart neu moi
+[ ] GET /api/cart - tinh toan unitPrice, itemTotal, subtotal dung
+[ ] POST /api/cart/items - add variant moi
+[ ] POST /api/cart/items - add variant da co -> tang quantity
+[ ] POST /api/cart/items - reject neu het hang
+[ ] POST /api/cart/items - reject neu vuot ton kho
+[ ] PUT /api/cart/items/{id} - update quantity
+[ ] DELETE /api/cart/items/{id} - xoa item
+[ ] DELETE /api/cart - clear tat ca
+
+Test Checklist - Voucher & Wishlist:
+[ ] POST /api/vouchers/validate - valid voucher PERCENTAGE
+[ ] POST /api/vouchers/validate - valid voucher FIXED_AMOUNT
+[ ] POST /api/vouchers/validate - expired voucher
+[ ] POST /api/vouchers/validate - min order not met
+[ ] GET /api/wishlists - danh sach yeu thich
+[ ] POST /api/wishlists - them san pham
+[ ] POST /api/wishlists - reject duplicate
+[ ] DELETE /api/wishlists/{id} - xoa san pham
+
+Test Checklist - Authorization:
+[ ] Cart APIs require authentication (Customer)
+[ ] Wishlist APIs require authentication (Customer)
+[ ] Product listing APIs la public
+[ ] Recommend Size require authentication (Customer)
+
+================================================================
+6. Tong Ket Task
+================================================================
+
+Task ID   | Task Name                      | Tables                | Effort | Pri
+----------|--------------------------------|-----------------------|--------|----
+BE-2.1.1  | API: Get Categories            | Categories, Products  | 2h     | C
+BE-2.1.2  | API: Get Products List         | Products, ...         | 5h     | C
+BE-2.1.3  | API: Search Products           | Products              | 3h     | C
+BE-2.1.4  | API: Products by Category      | Products, Categories  | 3h     | H
+BE-2.2.1  | API: Product Detail            | Products, ...         | 4h     | C
+BE-2.2.2  | API: Product Variants          | ProductVariants       | 2h     | H
+BE-2.2.3  | API: Product Images            | ProductImages         | 1h     | H
+BE-2.2.4  | API: Size Guide                | SizeGuides            | 2h     | C
+BE-2.2.5  | API: Recommend Size (AI)       | SizeGuides, ...       | 4h     | C
+BE-2.2.6  | API: Product Reviews           | ProductReviews, Users | 3h     | M
+BE-2.3.1  | API: Get Cart                  | CartItems, ...        | 3h     | C
+BE-2.3.2  | API: Add to Cart               | CartItems, Variants   | 4h     | C
+BE-2.3.3  | API: Update Cart Item          | CartItems             | 2h     | C
+BE-2.3.4  | API: Remove Cart Item          | CartItems             | 1h     | C
+BE-2.3.5  | API: Clear Cart                | CartItems             | 1h     | H
+BE-2.3.6  | API: Validate Voucher          | Vouchers, CartItems   | 3h     | M
+BE-2.3.7  | API: Get Wishlists             | Wishlists, Products   | 2h     | M
+BE-2.3.8  | API: Add to Wishlist           | Wishlists             | 1h     | M
+BE-2.3.9  | API: Remove from Wishlist      | Wishlists             | 1h     | M
+BE-2.4.1  | Testing & Bug Fixes            | -                     | 8h     | C
+
+Priority: C = Critical, H = High, M = Medium
+Total Effort: 53 hours
+
+API Endpoints Summary:
+
+Method | Endpoint                                | Auth     | Description
+-------|-----------------------------------------|----------|--------------------------------
+GET    | /api/categories                         | No       | Danh sach danh muc
+GET    | /api/products                           | No       | Danh sach san pham (filter/sort)
+GET    | /api/products/search                    | No       | Tim kiem san pham
+GET    | /api/categories/{id}/products           | No       | San pham theo danh muc
+GET    | /api/products/{id}                      | No       | Chi tiet san pham
+GET    | /api/products/{id}/variants             | No       | Bien the san pham
+GET    | /api/products/{id}/images               | No       | Hinh anh san pham
+GET    | /api/products/{id}/size-guide           | No       | Bang thong so size
+GET    | /api/products/{id}/recommend-size       | Customer | AI goi y size (Big Size)
+GET    | /api/products/{id}/reviews              | No       | Danh gia san pham
+GET    | /api/cart                               | Customer | Xem gio hang
+POST   | /api/cart/items                         | Customer | Them vao gio
+PUT    | /api/cart/items/{id}                    | Customer | Cap nhat so luong
+DELETE | /api/cart/items/{id}                    | Customer | Xoa khoi gio
+DELETE | /api/cart                               | Customer | Xoa toan bo gio
+POST   | /api/vouchers/validate                  | Customer | Kiem tra ma giam gia
+GET    | /api/wishlists                          | Customer | Danh sach yeu thich
+POST   | /api/wishlists                          | Customer | Them yeu thich
+DELETE | /api/wishlists/{productId}              | Customer | Xoa yeu thich
+
+--- END OF MILESTONE 2 ---

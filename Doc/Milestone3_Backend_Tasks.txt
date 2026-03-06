@@ -1,0 +1,746 @@
+MILESTONE 3
+BACKEND TASK DOCUMENT
+Orders, Payment & Reviews
+Timeline: Week 3 (7 days)
+Version: 1.0 | February 2026
+
+================================================================
+1. Tong Quan Milestone 3
+================================================================
+
+1.1 Muc Tieu
+- Xay dung APIs Checkout (tao don hang tu gio hang)
+- Xay dung APIs Quan ly Don hang (Customer, Staff, Admin)
+- Xay dung APIs Thanh toan SePay + COD
+- Xay dung APIs Danh gia San pham (voi thong tin body - Big Size)
+
+1.2 Timeline
+
+Ngay  | Sprint      | Noi dung
+------|------------|------------------------------------------
+1-2   | Sprint 3.1 | Checkout & Order Creation APIs
+3-4   | Sprint 3.2 | Order Management (Staff/Admin) APIs
+5-6   | Sprint 3.3 | Payment (SePay) & Reviews APIs
+7     | Sprint 3.4 | Testing & Bug Fixes
+
+1.3 Tables Su Dung
+
+Table            | Muc dich
+-----------------|------------------------------------------
+Orders           | Don hang (status, shipping info, timeline)
+OrderItems       | Chi tiet don (snapshot san pham luc mua)
+Payments         | Thanh toan (COD / SePay)
+Vouchers         | Ma giam gia (ap dung khi checkout)
+ProductVariants  | Tru ton kho khi checkout
+Products         | Tang SoldCount, lay thong tin
+ProductReviews   | Danh gia san pham (kem body info)
+CartItems        | Xoa sau khi checkout
+Users            | Thong tin user, shipper
+
+1.4 Order Status Flow
+
+PENDING --> CONFIRMED --> PROCESSING --> SHIPPING --> DELIVERED
+   |            |             |            |
+   v            v             v            v
+CANCELLED   CANCELLED    CANCELLED    CANCELLED (giao that bai 3 lan)
+
+================================================================
+2. Sprint 3.1: Checkout & Order Creation
+================================================================
+Timeline: Ngay 1-2 | Effort: 15h
+
+----------------------------------------------------------------
+API 1: Checkout (Create Order)
+----------------------------------------------------------------
+Task ID       : BE-3.1.1
+Endpoint      : POST /api/orders
+Effort        : 5 hours
+Priority      : Critical
+Tables        : Orders, OrderItems, CartItems, ProductVariants, Products, Vouchers, UserAddresses
+Auth Required : Yes (Customer)
+
+Request Body:
+{
+  "addressId": 1,
+  "paymentMethod": "SEPAY",
+  "voucherCode": "WELCOME10",
+  "note": "Giao gio hanh chinh"
+}
+
+Validation Rules:
+Field          | Rules
+---------------|-------------------------------------------
+addressId      | Required, must belong to current user
+paymentMethod  | Required, enum: COD, SEPAY
+voucherCode    | Optional, valid voucher code
+note           | Optional, max 500 chars
+
+Response Success (201):
+{
+  "success": true,
+  "message": "Dat hang thanh cong",
+  "data": {
+    "orderId": 1,
+    "orderCode": "ORD-20260227-0001",
+    "status": "PENDING",
+    "subtotal": 498000,
+    "shippingFee": 30000,
+    "discount": 49800,
+    "total": 478200,
+    "paymentMethod": "SEPAY",
+    "items": [
+      {
+        "productName": "Ao Thun Oversize Cotton Co Gian 4 Chieu",
+        "size": "2XL",
+        "color": "Den",
+        "price": 249000,
+        "quantity": 2,
+        "subtotal": 498000
+      }
+    ],
+    "shippingAddress": {
+      "receiverName": "Tran Thi Lan",
+      "phone": "0912345678",
+      "address": "123 Nguyen Trai, P.Ben Thanh, Quan 1, TP. Ho Chi Minh"
+    },
+    "createdAt": "2026-02-27T08:00:00Z"
+  }
+}
+
+Response Error (400) - Gio hang trong:
+{ "success": false, "message": "Gio hang trong. Vui long them san pham truoc khi dat hang." }
+
+Response Error (400) - Het hang:
+{
+  "success": false,
+  "message": "Mot so san pham da het hang",
+  "data": {
+    "outOfStockItems": [
+      { "productName": "Ao Thun Oversize 4XL Den", "available": 0, "requested": 2 }
+    ]
+  }
+}
+
+Business Logic:
+- Lay userId tu JWT, lay CartItems cua user
+- Neu cart trong: return 400
+- Validate addressId thuoc ve user
+- Voi moi CartItem:
+  a. Check ProductVariant.StockQuantity >= CartItem.Quantity
+  b. Neu bat ky item nao het hang: return 400 voi danh sach
+- Tinh toan:
+  a. unitPrice = COALESCE(Product.SalePrice, Product.Price) + Variant.PriceAdjustment
+  b. subtotal = SUM(unitPrice * quantity)
+  c. Ap dung voucher neu co (validate lai lan nua)
+  d. total = subtotal + shippingFee - discount
+- Tao OrderCode: "ORD-" + YYYYMMDD + "-" + sequence (4 digits)
+- Snapshot dia chi tu UserAddresses (bao gom Lat/Long)
+- INSERT Orders
+- INSERT OrderItems (SNAPSHOT: ProductName, ProductImage, Size, Color, Price)
+- Tru StockQuantity cua moi ProductVariant
+- Tang Products.SoldCount
+- Neu co voucher: tang Vouchers.UsedCount
+- Tao Payments record: Status = 'PENDING'
+- Xoa tat ca CartItems cua user
+- Tao Notification cho user: "Don hang da duoc tao"
+
+SQL Transaction (PHAI dung transaction):
+BEGIN;
+  -- 1. Lock & check stock
+  SELECT pv."StockQuantity" FROM "ProductVariants" pv WHERE pv."Id" = @variantId FOR UPDATE;
+  -- 2. Create order
+  INSERT INTO "Orders" (...) VALUES (...) RETURNING "Id";
+  -- 3. Create order items (snapshot)
+  INSERT INTO "OrderItems" (...) VALUES (...);
+  -- 4. Deduct stock
+  UPDATE "ProductVariants" SET "StockQuantity" = "StockQuantity" - @qty WHERE "Id" = @variantId;
+  -- 5. Increase sold count
+  UPDATE "Products" SET "SoldCount" = "SoldCount" + @qty WHERE "Id" = @productId;
+  -- 6. Create payment
+  INSERT INTO "Payments" (...) VALUES (...);
+  -- 7. Clear cart
+  DELETE FROM "CartItems" WHERE "UserId" = @userId;
+COMMIT;
+
+----------------------------------------------------------------
+API 2: Get My Orders (Customer)
+----------------------------------------------------------------
+Task ID       : BE-3.1.2
+Endpoint      : GET /api/orders
+Effort        : 3 hours
+Priority      : Critical
+Tables        : Orders, OrderItems, Payments
+Auth Required : Yes (Customer)
+
+Query Parameters:
+Parameter | Type    | Default | Description
+----------|---------|---------|----------------------------
+page      | int     | 1       | So trang
+pageSize  | int     | 10      | So don moi trang
+status    | string? | null    | Filter: PENDING, CONFIRMED, SHIPPING, DELIVERED, CANCELLED
+
+Response Success (200):
+{
+  "success": true,
+  "data": {
+    "items": [
+      {
+        "orderId": 1,
+        "orderCode": "ORD-20260227-0001",
+        "status": "SHIPPING",
+        "total": 478200,
+        "totalItems": 1,
+        "paymentMethod": "SEPAY",
+        "paymentStatus": "COMPLETED",
+        "firstItemImage": "https://res.cloudinary.com/bigsize/ao-thun-oversize-den-1.jpg",
+        "createdAt": "2026-02-27T08:00:00Z"
+      }
+    ],
+    "pagination": { "currentPage": 1, "pageSize": 10, "totalItems": 5, "totalPages": 1 }
+  }
+}
+
+Business Logic:
+- Chi lay Orders cua userId hien tai
+- Filter theo Status neu co
+- Lay firstItemImage tu OrderItems[0].ProductImage
+- Count totalItems = SUM(OrderItems.Quantity)
+- Join Payments de lay paymentMethod, paymentStatus
+
+----------------------------------------------------------------
+API 3: Get Order Detail (Customer)
+----------------------------------------------------------------
+Task ID       : BE-3.1.3
+Endpoint      : GET /api/orders/{orderId}
+Effort        : 3 hours
+Priority      : Critical
+Tables        : Orders, OrderItems, Payments
+Auth Required : Yes (Customer)
+
+Response Success (200):
+{
+  "success": true,
+  "data": {
+    "orderId": 1,
+    "orderCode": "ORD-20260227-0001",
+    "status": "SHIPPING",
+    "subtotal": 498000,
+    "shippingFee": 30000,
+    "discount": 49800,
+    "total": 478200,
+    "note": "Giao gio hanh chinh",
+    "shippingInfo": {
+      "name": "Tran Thi Lan",
+      "phone": "0912345678",
+      "address": "123 Nguyen Trai, P.Ben Thanh, Quan 1, TP. Ho Chi Minh",
+      "latitude": 10.7726890,
+      "longitude": 106.6980610
+    },
+    "items": [
+      {
+        "orderItemId": 1,
+        "productName": "Ao Thun Oversize Cotton Co Gian 4 Chieu",
+        "productImage": "https://res.cloudinary.com/bigsize/ao-thun-oversize-den-1.jpg",
+        "size": "2XL",
+        "color": "Den",
+        "price": 249000,
+        "quantity": 2,
+        "subtotal": 498000,
+        "productVariantId": 2
+      }
+    ],
+    "payment": {
+      "paymentMethod": "SEPAY",
+      "amount": 478200,
+      "status": "COMPLETED",
+      "transactionId": "SP-TXN-20260227-001",
+      "paidAt": "2026-02-27T08:05:00Z"
+    },
+    "timeline": {
+      "createdAt": "2026-02-27T08:00:00Z",
+      "confirmedAt": "2026-02-27T08:30:00Z",
+      "shippedAt": "2026-02-27T10:00:00Z",
+      "deliveredAt": null,
+      "cancelledAt": null
+    }
+  }
+}
+
+Business Logic:
+- Verify orderId thuoc ve userId hien tai
+- Join OrderItems, Payments
+- Tra ve timeline (CreatedAt, ConfirmedAt, ShippedAt, DeliveredAt, CancelledAt)
+
+----------------------------------------------------------------
+API 4: Cancel Order (Customer)
+----------------------------------------------------------------
+Task ID       : BE-3.1.4
+Endpoint      : PUT /api/orders/{orderId}/cancel
+Effort        : 4 hours
+Priority      : High
+Tables        : Orders, OrderItems, ProductVariants, Products, Payments
+Auth Required : Yes (Customer)
+
+Request Body:
+{
+  "cancelReason": "Toi muon doi san pham khac"
+}
+
+Response Success (200):
+{
+  "success": true,
+  "message": "Don hang da duoc huy thanh cong"
+}
+
+Response Error (400):
+{
+  "success": false,
+  "message": "Chi co the huy don hang o trang thai CHO XAC NHAN"
+}
+
+Business Logic:
+- Verify orderId thuoc ve userId
+- Chi cho phep huy khi Status = 'PENDING'
+- Cap nhat: Status = 'CANCELLED', CancelReason, CancelledAt = NOW
+- Hoan tra StockQuantity cho moi OrderItem
+- Giam Products.SoldCount
+- Neu Payment.PaymentMethod = 'SEPAY' va Payment.Status = 'COMPLETED':
+  Cap nhat Payment.Status = 'REFUND_PENDING'
+- Tao Notification: "Don hang da bi huy"
+
+================================================================
+3. Sprint 3.2: Order Management (Staff/Admin)
+================================================================
+Timeline: Ngay 3-4 | Effort: 14h
+
+----------------------------------------------------------------
+API 5: Get All Orders (Admin/Staff)
+----------------------------------------------------------------
+Task ID       : BE-3.2.1
+Endpoint      : GET /api/admin/orders
+Effort        : 3 hours
+Priority      : Critical
+Tables        : Orders, Users, Payments
+Auth Required : Yes (Admin/Staff, Role = 1 or 2)
+
+Query Parameters:
+Parameter   | Type    | Default | Description
+------------|---------|---------|----------------------------
+page        | int     | 1       | So trang
+pageSize    | int     | 20      | So don moi trang
+status      | string? | null    | Filter theo trang thai
+search      | string? | null    | Tim theo OrderCode hoac Phone
+startDate   | date?   | null    | Tu ngay
+endDate     | date?   | null    | Den ngay
+
+Response Success (200):
+{
+  "success": true,
+  "data": {
+    "items": [
+      {
+        "orderId": 1,
+        "orderCode": "ORD-20260227-0001",
+        "customer": { "userId": 3, "fullName": "Tran Thi Lan", "phone": "0912345678" },
+        "shipper": { "userId": 5, "fullName": "Pham Minh Shipper" },
+        "status": "SHIPPING",
+        "total": 478200,
+        "paymentMethod": "SEPAY",
+        "paymentStatus": "COMPLETED",
+        "createdAt": "2026-02-27T08:00:00Z"
+      }
+    ],
+    "pagination": { "currentPage": 1, "pageSize": 20, "totalItems": 100, "totalPages": 5 }
+  }
+}
+
+Business Logic:
+- Verify Role = 1 (Admin) hoac Role = 2 (Staff)
+- Search: ILIKE tren OrderCode, ShippingPhone
+- Filter theo Status, date range
+- Join Users de lay customer/shipper info
+
+----------------------------------------------------------------
+API 6: Get Order Detail (Admin/Staff)
+----------------------------------------------------------------
+Task ID       : BE-3.2.2
+Endpoint      : GET /api/admin/orders/{orderId}
+Effort        : 2 hours
+Priority      : Critical
+Tables        : Orders, OrderItems, Payments, Users
+Auth Required : Yes (Admin/Staff)
+
+Response: Giong API 3 (Customer Order Detail) nhung them:
+- customer info (fullName, email, phone)
+- shipper info (fullName, phone)
+
+----------------------------------------------------------------
+API 7: Confirm Order
+----------------------------------------------------------------
+Task ID       : BE-3.2.3
+Endpoint      : PUT /api/admin/orders/{orderId}/confirm
+Effort        : 2 hours
+Priority      : Critical
+Tables        : Orders, Notifications
+Auth Required : Yes (Admin/Staff)
+
+Response Success (200):
+{
+  "success": true,
+  "message": "Don hang da duoc xac nhan"
+}
+
+Business Logic:
+- Verify Role = Admin/Staff
+- Check Status = 'PENDING'
+- Cap nhat: Status = 'CONFIRMED', ConfirmedAt = NOW
+- Tao Notification cho Customer: "Don hang ORD-xxx da duoc xac nhan"
+
+----------------------------------------------------------------
+API 8: Assign Shipper
+----------------------------------------------------------------
+Task ID       : BE-3.2.4
+Endpoint      : PUT /api/admin/orders/{orderId}/assign-shipper
+Effort        : 3 hours
+Priority      : Critical
+Tables        : Orders, Users, Notifications
+Auth Required : Yes (Admin/Staff)
+
+Request Body:
+{
+  "shipperId": 5
+}
+
+Validation Rules:
+Field     | Rules
+----------|-------------------------------------------
+shipperId | Required, must exist, must have Role = 4 (Shipper), must be IsActive
+
+Response Success (200):
+{
+  "success": true,
+  "message": "Da gan shipper thanh cong",
+  "data": { "shipperId": 5, "shipperName": "Pham Minh Shipper" }
+}
+
+Business Logic:
+- Verify Role = Admin/Staff
+- Check Order Status = 'CONFIRMED'
+- Verify shipperId la User voi Role = 4, IsActive = true
+- Cap nhat: Orders.ShipperId = @shipperId, Status = 'PROCESSING'
+- Tao Notification cho Shipper: "Ban co don hang moi can giao"
+- Tao Notification cho Customer: "Don hang dang duoc chuan bi giao"
+
+----------------------------------------------------------------
+API 9: Cancel Order (Admin/Staff)
+----------------------------------------------------------------
+Task ID       : BE-3.2.5
+Endpoint      : PUT /api/admin/orders/{orderId}/cancel
+Effort        : 2 hours
+Priority      : High
+Tables        : Orders, OrderItems, ProductVariants, Products, Payments, Notifications
+Auth Required : Yes (Admin/Staff)
+
+Request Body:
+{
+  "cancelReason": "Het hang, khong the giao"
+}
+
+Response Success (200):
+{ "success": true, "message": "Don hang da duoc huy" }
+
+Business Logic:
+- Verify Role = Admin/Staff
+- Chi huy khi Status chua la DELIVERED
+- Hoan tra stock, giam SoldCount
+- Xu ly refund neu da thanh toan SePay
+- Tao Notification cho Customer
+
+================================================================
+4. Sprint 3.3: Payment & Reviews
+================================================================
+Timeline: Ngay 5-6 | Effort: 16h
+
+----------------------------------------------------------------
+API 10: Create SePay Payment
+----------------------------------------------------------------
+Task ID       : BE-3.3.1
+Endpoint      : POST /api/payments/sepay/create
+Effort        : 4 hours
+Priority      : Critical
+Tables        : Payments, Orders
+Auth Required : Yes (Customer)
+
+Request Body:
+{
+  "orderId": 1
+}
+
+Response Success (200):
+{
+  "success": true,
+  "data": {
+    "paymentUrl": "https://my.sepay.vn/pay/ORD-20260227-0001",
+    "qrCodeUrl": "https://img.sepay.vn/qr/ORD-20260227-0001.png",
+    "amount": 478200,
+    "orderCode": "ORD-20260227-0001",
+    "expiredAt": "2026-02-27T08:15:00Z"
+  }
+}
+
+Response Error (400):
+{ "success": false, "message": "Don hang da duoc thanh toan" }
+
+Business Logic:
+- Verify orderId thuoc ve userId
+- Check Payment.Status = 'PENDING' va PaymentMethod = 'SEPAY'
+- Goi SePay API tao giao dich:
+  amount, orderCode, description, callbackUrl, returnUrl
+- Luu thong tin vao Payments.PaymentData (JSONB)
+- Return paymentUrl hoac qrCodeUrl cho client
+
+----------------------------------------------------------------
+API 11: SePay Webhook Callback
+----------------------------------------------------------------
+Task ID       : BE-3.3.2
+Endpoint      : POST /api/payments/sepay/callback
+Effort        : 4 hours
+Priority      : Critical
+Tables        : Payments, Orders, Notifications
+Auth Required : No (Webhook - verify bang checksum)
+
+Request Body (tu SePay gui den):
+{
+  "orderCode": "ORD-20260227-0001",
+  "transactionId": "SP-TXN-20260227-001",
+  "amount": 478200,
+  "status": "COMPLETED",
+  "checksum": "abc123def456..."
+}
+
+Response Success (200):
+{ "success": true }
+
+Business Logic:
+- Verify checksum tu SePay (HMAC-SHA256)
+- Tim Payments theo orderCode
+- Verify amount khop
+- Neu status = COMPLETED:
+  a. Cap nhat Payments: Status = 'COMPLETED', TransactionId, PaidAt = NOW
+  b. Luu PaymentData (JSONB) tu SePay response
+  c. Tao Notification cho Customer: "Thanh toan thanh cong"
+- Neu status = FAILED:
+  a. Cap nhat Payments.Status = 'FAILED'
+  b. Tao Notification: "Thanh toan that bai"
+- BAO MAT: Endpoint nay KHONG can JWT nhung PHAI verify checksum
+
+----------------------------------------------------------------
+API 12: Get Payment Status
+----------------------------------------------------------------
+Task ID       : BE-3.3.3
+Endpoint      : GET /api/payments/orders/{orderId}
+Effort        : 2 hours
+Priority      : High
+Tables        : Payments, Orders
+Auth Required : Yes (Customer)
+
+Response Success (200):
+{
+  "success": true,
+  "data": {
+    "orderId": 1,
+    "orderCode": "ORD-20260227-0001",
+    "paymentMethod": "SEPAY",
+    "amount": 478200,
+    "status": "COMPLETED",
+    "transactionId": "SP-TXN-20260227-001",
+    "paidAt": "2026-02-27T08:05:00Z",
+    "createdAt": "2026-02-27T08:00:00Z"
+  }
+}
+
+Business Logic:
+- Verify orderId thuoc ve userId
+- Query Payments theo OrderId
+
+----------------------------------------------------------------
+API 13: Create Product Review
+----------------------------------------------------------------
+Task ID       : BE-3.3.4
+Endpoint      : POST /api/products/{productId}/reviews
+Effort        : 3 hours
+Priority      : Medium
+Tables        : ProductReviews, OrderItems, Orders, Products
+Auth Required : Yes (Customer)
+
+Request Body:
+{
+  "rating": 5,
+  "comment": "Ao mac rat thoai mai, co gian tot. Minh 178cm/110kg mac 3XL vua dep!",
+  "reviewImageUrl": "https://res.cloudinary.com/bigsize/review-img-1.jpg",
+  "heightCm": 178.0,
+  "weightKg": 110.0,
+  "sizeOrdered": "3XL",
+  "showBodyInfo": true
+}
+
+Validation Rules:
+Field          | Rules
+---------------|-------------------------------------------
+rating         | Required, integer 1-5
+comment        | Optional, max 1000 chars
+reviewImageUrl | Optional, valid URL (Cloudinary)
+heightCm       | Optional, 100-250
+weightKg       | Optional, 30-300
+sizeOrdered    | Optional, valid size string
+showBodyInfo   | Optional, default false
+
+Response Success (201):
+{
+  "success": true,
+  "message": "Danh gia thanh cong",
+  "data": {
+    "reviewId": 1,
+    "productId": 1,
+    "rating": 5,
+    "comment": "Ao mac rat thoai mai...",
+    "bodyInfo": { "heightCm": 178.0, "weightKg": 110.0, "sizeOrdered": "3XL" },
+    "createdAt": "2026-02-28T15:00:00Z"
+  }
+}
+
+Response Error (400):
+{ "success": false, "message": "Ban chua mua san pham nay hoac don hang chua duoc giao" }
+
+Response Error (409):
+{ "success": false, "message": "Ban da danh gia san pham nay roi" }
+
+Business Logic:
+- User phai dang nhap
+- Check user da mua san pham nay: OrderItems JOIN Orders
+  WHERE Orders.UserId = @userId AND OrderItems.ProductVariantId IN (variants of productId)
+  AND Orders.Status = 'DELIVERED'
+- Check UNIQUE(ProductId, UserId): moi user chi review 1 lan
+- INSERT ProductReviews voi OrderId
+- Cap nhat Products.AverageRating va TotalReviews:
+  UPDATE "Products" SET
+    "AverageRating" = (SELECT AVG("Rating") FROM "ProductReviews" WHERE "ProductId" = @productId),
+    "TotalReviews" = (SELECT COUNT(*) FROM "ProductReviews" WHERE "ProductId" = @productId)
+  WHERE "Id" = @productId;
+- TINH NANG DAC THU BIG SIZE: cho phep chia se so do co the trong review
+
+----------------------------------------------------------------
+API 14: Get Product Reviews
+----------------------------------------------------------------
+Task ID       : BE-3.3.5
+Endpoint      : GET /api/products/{productId}/reviews
+Effort        : 3 hours
+Priority      : Medium
+Tables        : ProductReviews, Users
+Auth Required : No (Public API)
+
+(Chi tiet response giong API 10 o Milestone 2 - GET /api/products/{productId}/reviews)
+
+Business Logic:
+- Lay reviews voi pagination, filter theo rating
+- Tinh ratingDistribution
+- Hien thi bodyInfo chi khi ShowBodyInfo = true
+
+================================================================
+5. Sprint 3.4: Testing & Bug Fixes
+================================================================
+Timeline: Ngay 7 | Effort: 8h
+
+Task ID: BE-3.4.1
+Effort: 8 hours
+Priority: Critical
+
+Test Checklist - Checkout:
+[ ] POST /api/orders - checkout thanh cong voi COD
+[ ] POST /api/orders - checkout thanh cong voi SEPAY
+[ ] POST /api/orders - checkout voi voucher PERCENTAGE
+[ ] POST /api/orders - checkout voi voucher FIXED_AMOUNT
+[ ] POST /api/orders - reject gio hang trong
+[ ] POST /api/orders - reject khi het hang
+[ ] POST /api/orders - reject dia chi khong hop le
+[ ] POST /api/orders - tru stock dung sau checkout
+[ ] POST /api/orders - tang SoldCount dung
+[ ] POST /api/orders - xoa CartItems sau checkout
+[ ] POST /api/orders - tao Payments record dung
+[ ] POST /api/orders - sinh OrderCode dung format
+
+Test Checklist - Order Management:
+[ ] GET /api/orders - customer chi thay don cua minh
+[ ] GET /api/orders - filter theo status
+[ ] GET /api/orders/{id} - tra ve full detail + timeline
+[ ] PUT /api/orders/{id}/cancel - huy khi PENDING
+[ ] PUT /api/orders/{id}/cancel - reject khi CONFIRMED tro len
+[ ] PUT /api/orders/{id}/cancel - hoan tra stock
+[ ] GET /api/admin/orders - staff/admin thay tat ca don
+[ ] GET /api/admin/orders - search theo OrderCode, Phone
+[ ] PUT /api/admin/orders/{id}/confirm - PENDING -> CONFIRMED
+[ ] PUT /api/admin/orders/{id}/assign-shipper - gan shipper
+[ ] PUT /api/admin/orders/{id}/assign-shipper - reject Role khac 4
+[ ] PUT /api/admin/orders/{id}/cancel - huy don + hoan stock
+
+Test Checklist - Payment:
+[ ] POST /api/payments/sepay/create - tao thanh toan SePay
+[ ] POST /api/payments/sepay/create - reject don da thanh toan
+[ ] POST /api/payments/sepay/callback - verify checksum dung
+[ ] POST /api/payments/sepay/callback - reject checksum sai
+[ ] POST /api/payments/sepay/callback - cap nhat payment status
+[ ] GET /api/payments/orders/{id} - tra ve payment info
+
+Test Checklist - Reviews:
+[ ] POST /api/products/{id}/reviews - review thanh cong
+[ ] POST /api/products/{id}/reviews - reject chua mua san pham
+[ ] POST /api/products/{id}/reviews - reject don chua DELIVERED
+[ ] POST /api/products/{id}/reviews - reject da review roi
+[ ] POST /api/products/{id}/reviews - cap nhat AverageRating
+[ ] GET /api/products/{id}/reviews - hien thi body info khi ShowBodyInfo = true
+
+================================================================
+6. Tong Ket Task
+================================================================
+
+Task ID   | Task Name                     | Tables              | Effort | Pri
+----------|-------------------------------|---------------------|--------|----
+BE-3.1.1  | API: Checkout (Create Order)  | Orders, OrderItems  | 5h     | C
+BE-3.1.2  | API: Get My Orders            | Orders, Payments    | 3h     | C
+BE-3.1.3  | API: Get Order Detail         | Orders, OrderItems  | 3h     | C
+BE-3.1.4  | API: Cancel Order (Customer)  | Orders, Variants    | 4h     | H
+BE-3.2.1  | API: Get All Orders (Admin)   | Orders, Users       | 3h     | C
+BE-3.2.2  | API: Admin Order Detail       | Orders, Users       | 2h     | C
+BE-3.2.3  | API: Confirm Order            | Orders              | 2h     | C
+BE-3.2.4  | API: Assign Shipper           | Orders, Users       | 3h     | C
+BE-3.2.5  | API: Cancel Order (Admin)     | Orders, Variants    | 2h     | H
+BE-3.3.1  | API: Create SePay Payment     | Payments, Orders    | 4h     | C
+BE-3.3.2  | API: SePay Webhook            | Payments, Orders    | 4h     | C
+BE-3.3.3  | API: Get Payment Status       | Payments            | 2h     | H
+BE-3.3.4  | API: Create Review            | ProductReviews      | 3h     | M
+BE-3.3.5  | API: Get Reviews              | ProductReviews      | 3h     | M
+BE-3.4.1  | Testing & Bug Fixes           | -                   | 8h     | C
+
+Priority: C = Critical, H = High, M = Medium
+Total Effort: 51 hours
+
+API Endpoints Summary:
+
+Method | Endpoint                             | Auth       | Description
+-------|--------------------------------------|------------|-----------------------------------
+POST   | /api/orders                          | Customer   | Dat hang (checkout)
+GET    | /api/orders                          | Customer   | Lich su don hang
+GET    | /api/orders/{id}                     | Customer   | Chi tiet don hang
+PUT    | /api/orders/{id}/cancel              | Customer   | Huy don hang
+GET    | /api/admin/orders                    | Staff/Admin| Tat ca don hang
+GET    | /api/admin/orders/{id}               | Staff/Admin| Chi tiet don (admin)
+PUT    | /api/admin/orders/{id}/confirm       | Staff/Admin| Xac nhan don
+PUT    | /api/admin/orders/{id}/assign-shipper| Staff/Admin| Gan shipper
+PUT    | /api/admin/orders/{id}/cancel        | Staff/Admin| Huy don (admin)
+POST   | /api/payments/sepay/create           | Customer   | Tao thanh toan SePay
+POST   | /api/payments/sepay/callback         | Webhook    | SePay callback
+GET    | /api/payments/orders/{orderId}       | Customer   | Trang thai thanh toan
+POST   | /api/products/{id}/reviews           | Customer   | Danh gia san pham
+GET    | /api/products/{id}/reviews           | No         | Xem danh gia
+
+--- END OF MILESTONE 3 ---

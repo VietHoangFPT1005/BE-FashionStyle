@@ -6,6 +6,8 @@ using MV.ApplicationLayer.ServiceInterfaces;
 using MV.ApplicationLayer.Services;
 using MV.DomainLayer.Configuration;
 using MV.InfrastructureLayer.DBContext;
+using MV.InfrastructureLayer.Interfaces;
+using MV.InfrastructureLayer.Repositories;
 using System.Text;
 
 namespace MV.PresentationLayer
@@ -24,7 +26,7 @@ namespace MV.PresentationLayer
             {
                 options.AddPolicy("AllowFrontend", policy =>
                 {
-                    policy.WithOrigins("http://localhost:3000", "http://localhost:5173")
+                    policy.WithOrigins("https://localhost:7159")
                         .AllowAnyMethod()
                         .AllowAnyHeader()
                         .AllowCredentials();
@@ -100,34 +102,75 @@ namespace MV.PresentationLayer
             // TỐI ƯU SỐ 2: Bổ sung các Dependency Injection bị thiếu
             // ==============================================
 
-            // Đọc SmtpSettings từ appsettings.json
+            // Đọc Settings từ appsettings.json
             builder.Services.Configure<SmtpSettings>(builder.Configuration.GetSection("SmtpSettings"));
+            builder.Services.Configure<SePaySettings>(builder.Configuration.GetSection("SePay"));
+            builder.Services.Configure<GeminiSettings>(builder.Configuration.GetSection("Gemini"));
+            builder.Services.Configure<GoogleSettings>(builder.Configuration.GetSection("Google"));
 
-            // Repositories
-
-
-            // Services
-            builder.Services.AddScoped<IEmailService, EmailService>();
-
-
-            // Cloudinary (file upload service)
-
-
-            // HttpClient for external API calls (Location service)
-            builder.Services.AddHttpClient();
-
-            // Register DbContext with connection string from appsettings
+            // Register DbContext
             builder.Services.AddDbContext<FashionDbContext>(options =>
-                options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection"),
-                    npgsqlOptions =>
-                    {
-                        npgsqlOptions.MigrationsAssembly("MV.InfrastructureLayer");
-                        npgsqlOptions.MapEnum<MV.DomainLayer.Enums.ProductTypeEnum>(
-                            "product_type_enum",
-                            schemaName: null,
-                            nameTranslator: new Npgsql.NameTranslation.NpgsqlNullNameTranslator());
-                    })
-                .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning)));
+                options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+            // Repositories - Milestone 1
+            builder.Services.AddScoped<IUserRepository, UserRepository>();
+            builder.Services.AddScoped<IOtpCodeRepository, OtpCodeRepository>();
+            builder.Services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
+            builder.Services.AddScoped<IUserAddressRepository, UserAddressRepository>();
+            builder.Services.AddScoped<IUserBodyProfileRepository, UserBodyProfileRepository>();
+
+            // Repositories - Milestone 2
+            builder.Services.AddScoped<ICategoryRepository, CategoryRepository>();
+            builder.Services.AddScoped<IProductRepository, ProductRepository>();
+            builder.Services.AddScoped<IProductVariantRepository, ProductVariantRepository>();
+            builder.Services.AddScoped<IProductImageRepository, ProductImageRepository>();
+            builder.Services.AddScoped<ISizeGuideRepository, SizeGuideRepository>();
+            builder.Services.AddScoped<ICartItemRepository, CartItemRepository>();
+            builder.Services.AddScoped<IWishlistRepository, WishlistRepository>();
+            builder.Services.AddScoped<IVoucherRepository, VoucherRepository>();
+            builder.Services.AddScoped<IProductReviewRepository, ProductReviewRepository>();
+
+            // Services - Milestone 1
+            builder.Services.AddScoped<IEmailService, EmailService>();
+            builder.Services.AddScoped<IAuthService, AuthService>();
+            builder.Services.AddScoped<IUserService, UserService>();
+            builder.Services.AddScoped<IBodyProfileService, BodyProfileService>();
+            builder.Services.AddScoped<IAddressService, AddressService>();
+
+            // Services - Milestone 2
+            builder.Services.AddScoped<ICategoryService, CategoryService>();
+            builder.Services.AddScoped<IProductService, ProductService>();
+            builder.Services.AddScoped<ICartService, CartService>();
+            builder.Services.AddScoped<IWishlistService, WishlistService>();
+            builder.Services.AddScoped<IVoucherService, VoucherService>();
+
+            // Repositories - Milestone 3
+            builder.Services.AddScoped<IOrderRepository, OrderRepository>();
+            builder.Services.AddScoped<IOrderItemRepository, OrderItemRepository>();
+            builder.Services.AddScoped<IPaymentRepository, PaymentRepository>();
+            builder.Services.AddScoped<INotificationRepository, NotificationRepository>();
+
+            // Services - Milestone 3
+            builder.Services.AddScoped<IOrderService, OrderService>();
+            builder.Services.AddScoped<IPaymentService, PaymentService>();
+            builder.Services.AddScoped<IReviewService, ReviewService>();
+
+            // Repositories - Milestone 4
+            builder.Services.AddScoped<IShipperLocationRepository, ShipperLocationRepository>();
+            builder.Services.AddScoped<IChatAiHistoryRepository, ChatAiHistoryRepository>();
+
+            // Services - Milestone 4
+            builder.Services.AddScoped<IShipperService, ShipperService>();
+            builder.Services.AddScoped<IChatAiService, ChatAiService>();
+            builder.Services.AddScoped<INotificationService, NotificationService>();
+            builder.Services.AddScoped<IAdminService, AdminService>();
+
+            // Services - Milestone 5 (Admin Management + Refund)
+            builder.Services.AddScoped<IAdminProductService, AdminProductService>();
+            builder.Services.AddScoped<IRefundService, RefundService>();
+
+            // HttpClient for external API calls
+            builder.Services.AddHttpClient();
 
             builder.Services.AddEndpointsApiExplorer();
 

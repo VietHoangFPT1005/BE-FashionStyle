@@ -63,6 +63,8 @@ public partial class Order
 
     public virtual ICollection<ProductReview> ProductReviews { get; set; } = new List<ProductReview>();
 
+    public virtual Refund? Refund { get; set; }
+
     public virtual User? Shipper { get; set; }
 
     public virtual ICollection<ShipperLocation> ShipperLocations { get; set; } = new List<ShipperLocation>();

@@ -1,0 +1,1027 @@
+MILESTONE 1
+BACKEND TASK DOCUMENT
+Authentication, User Profile & Body Profile
+Timeline: Week 1 (7 days)
+Version: 1.0 | February 2026
+
+================================================================
+1. Tong Quan Milestone 1
+================================================================
+
+1.1 Muc Tieu
+- Xay dung APIs Dang ky tai khoan voi xac thuc OTP qua Email
+- Xay dung APIs Dang nhap, Refresh Token, Logout
+- Xay dung APIs Quen mat khau va Doi mat khau (co OTP)
+- Xay dung APIs Quan ly ho so ca nhan (Profile)
+- Xay dung APIs Quan ly Ho so So do Co the (Body Profile) - Dac thu Big Size
+- Xay dung APIs Quan ly So dia chi giao hang (Addresses)
+
+1.2 Timeline
+
+Ngay        | Sprint       | Noi dung
+------------|-------------|------------------------------------------
+1-2         | Sprint 1.1  | Registration & OTP Verification APIs
+3-4         | Sprint 1.2  | Password Management & Logout APIs
+5-6         | Sprint 1.3  | Profile, Body Profile & Addresses APIs
+7           | Sprint 1.4  | Testing & Bug Fixes
+
+1.3 Tables Su Dung Trong Milestone 1
+
+Table             | Muc dich
+------------------|------------------------------------------
+Users             | Thong tin tai khoan nguoi dung (4 roles)
+OtpCodes          | Luu ma OTP xac thuc Email
+RefreshTokens     | Luu JWT Refresh Token
+UserAddresses     | So dia chi giao hang (nhieu dia chi)
+UserBodyProfiles  | Ho so so do co the (Dac thu Big Size)
+
+================================================================
+2. Sprint 1.1: Registration & OTP Verification
+================================================================
+Timeline: Ngay 1-2 | Effort: 16h
+
+----------------------------------------------------------------
+API 1: Register Account
+----------------------------------------------------------------
+Task ID       : BE-1.1.1
+Endpoint      : POST /api/auth/register
+Effort        : 4 hours
+Priority      : Critical
+Tables        : Users, OtpCodes
+Auth Required : No (Public API)
+
+Request Body:
+{
+  "username": "tranthilan",
+  "email": "tranthilan@gmail.com",
+  "phone": "0912345678",
+  "password": "MyPassword@123",
+  "fullName": "Tran Thi Lan",
+  "gender": "FEMALE"
+}
+
+Validation Rules:
+Field     | Rules
+----------|-------------------------------------------
+username  | Required, 3-50 chars, unique, alphanumeric + underscore
+email     | Required, valid email format, unique
+phone     | Optional, 10-11 digits, unique if provided
+password  | Required, min 6 chars
+fullName  | Required, 2-100 chars
+gender    | Optional, enum: MALE, FEMALE, OTHER
+
+Response Success (201):
+{
+  "success": true,
+  "message": "Dang ky thanh cong. Vui long xac thuc Email.",
+  "data": {
+    "userId": 3,
+    "email": "tranthilan@gmail.com",
+    "requiresVerification": true
+  }
+}
+
+Response Error (400) - Email da ton tai:
+{
+  "success": false,
+  "message": "Email da duoc su dung"
+}
+
+Business Logic:
+- Validate input fields
+- Check username, email, phone UNIQUE trong Users table
+- Hash password bang BCrypt (cost factor = 11)
+- Insert Users voi Role = 3 (Customer), IsActive = true, IsEmailVerified = false
+- Sinh ma OTP 6 so ngau nhien
+- Luu OtpCodes: Type = 'VERIFY_EMAIL', ExpiredAt = NOW + 5 phut, IsUsed = false
+- Gui OTP den Email qua SMTP (Gmail / SendGrid)
+- Return userId va thong bao can verify email
+
+SQL Query Structure:
+-- Check existing
+SELECT COUNT(*) FROM "Users" WHERE "Email" = @email OR "Username" = @username;
+
+-- Insert user
+INSERT INTO "Users" ("Username","Email","Phone","Password","FullName","Gender","Role","IsActive","IsEmailVerified")
+VALUES (@username, @email, @phone, @hashedPassword, @fullName, @gender, 3, true, false)
+RETURNING "Id";
+
+-- Create OTP
+INSERT INTO "OtpCodes" ("UserId","Email","Code","Type","ExpiredAt","IsUsed")
+VALUES (@userId, @email, @otpCode, 'VERIFY_EMAIL', NOW() + INTERVAL '5 minutes', false);
+
+----------------------------------------------------------------
+API 2: Verify Email OTP
+----------------------------------------------------------------
+Task ID       : BE-1.1.2
+Endpoint      : POST /api/auth/verify-email
+Effort        : 3 hours
+Priority      : Critical
+Tables        : OtpCodes, Users
+Auth Required : No (Public API)
+
+Request Body:
+{
+  "email": "tranthilan@gmail.com",
+  "otpCode": "482916"
+}
+
+Validation Rules:
+Field    | Rules
+---------|-------------------------------------------
+email    | Required, valid email format
+otpCode  | Required, exactly 6 digits
+
+Response Success (200):
+{
+  "success": true,
+  "message": "Xac thuc Email thanh cong. Ban co the dang nhap."
+}
+
+Response Error (400) - OTP sai hoac het han:
+{
+  "success": false,
+  "message": "Ma OTP khong hop le hoac da het han"
+}
+
+Business Logic:
+- Tim OtpCodes theo Email + Type = 'VERIFY_EMAIL' + IsUsed = false
+- Check Code khop
+- Check ExpiredAt >= NOW (chua het han)
+- Neu hop le: set OtpCodes.IsUsed = true
+- Cap nhat Users.IsEmailVerified = true
+- Neu sai: return error
+
+----------------------------------------------------------------
+API 3: Resend OTP
+----------------------------------------------------------------
+Task ID       : BE-1.1.3
+Endpoint      : POST /api/auth/resend-otp
+Effort        : 2 hours
+Priority      : High
+Tables        : OtpCodes, Users
+Auth Required : No (Public API)
+
+Request Body:
+{
+  "email": "tranthilan@gmail.com",
+  "type": "VERIFY_EMAIL"
+}
+
+Validation Rules:
+Field  | Rules
+-------|-------------------------------------------
+email  | Required, valid email, must exist in Users
+type   | Required, enum: VERIFY_EMAIL, RESET_PASSWORD
+
+Response Success (200):
+{
+  "success": true,
+  "message": "Ma OTP moi da duoc gui den email cua ban"
+}
+
+Response Error (429) - Qua so lan gui:
+{
+  "success": false,
+  "message": "Ban da gui qua 3 lan. Vui long thu lai sau 15 phut."
+}
+
+Business Logic:
+- Check email ton tai trong Users
+- Dem so OTP da gui trong 15 phut gan nhat (cung email + type)
+- Neu >= 3 lan: return error 429 (rate limit)
+- Huy tat ca OTP cu chua su dung (set IsUsed = true)
+- Sinh OTP 6 so moi
+- Luu OtpCodes: ExpiredAt = NOW + 5 phut
+- Gui OTP qua Email
+
+----------------------------------------------------------------
+API 4: Login
+----------------------------------------------------------------
+Task ID       : BE-1.1.4
+Endpoint      : POST /api/auth/login
+Effort        : 4 hours
+Priority      : Critical
+Tables        : Users, RefreshTokens
+Auth Required : No (Public API)
+
+Request Body:
+{
+  "emailOrPhone": "tranthilan@gmail.com",
+  "password": "MyPassword@123"
+}
+
+Validation Rules:
+Field         | Rules
+--------------|-------------------------------------------
+emailOrPhone  | Required, email or phone number
+password      | Required
+
+Response Success (200):
+{
+  "success": true,
+  "message": "Dang nhap thanh cong",
+  "data": {
+    "accessToken": "eyJhbGciOiJIUzI1NiIs...",
+    "refreshToken": "d4f8a2b1-9c3e-4a7d-b5f6-1e2a3b4c5d6e",
+    "expiresIn": 900,
+    "user": {
+      "userId": 3,
+      "username": "tranthilan",
+      "fullName": "Tran Thi Lan",
+      "email": "tranthilan@gmail.com",
+      "avatarUrl": null,
+      "gender": "FEMALE",
+      "role": 3,
+      "isEmailVerified": true,
+      "hasBodyProfile": true
+    }
+  }
+}
+
+Response Error (401) - Sai mat khau:
+{
+  "success": false,
+  "message": "Email/So dien thoai hoac mat khau khong dung"
+}
+
+Response Error (403) - Chua verify email:
+{
+  "success": false,
+  "message": "Tai khoan chua xac thuc Email. Vui long kiem tra hop thu.",
+  "data": { "requiresVerification": true, "email": "tranthilan@gmail.com" }
+}
+
+Response Error (403) - Tai khoan bi khoa:
+{
+  "success": false,
+  "message": "Tai khoan da bi khoa. Vui long lien he ho tro."
+}
+
+Business Logic:
+- Tim Users theo Email HOAC Phone
+- Neu khong tim thay: return 401
+- Check IsActive = true, neu false: return 403 (bi khoa)
+- Check IsEmailVerified = true, neu false: return 403 (chua verify)
+- Verify password bang BCrypt.Verify()
+- Neu sai: return 401
+- Tao JWT Access Token (expiry 15 phut):
+  Claims: userId, username, email, role
+- Tao Refresh Token (random GUID)
+- Luu RefreshTokens: ExpiredAt = NOW + 7 ngay
+- Check hasBodyProfile = UserBodyProfiles co record voi UserId nay khong
+- Return tokens + user info
+
+SQL Query Structure:
+SELECT u.*,
+       (SELECT COUNT(*) FROM "UserBodyProfiles" WHERE "UserId" = u."Id") > 0 as has_body_profile
+FROM "Users" u
+WHERE u."Email" = @emailOrPhone OR u."Phone" = @emailOrPhone;
+
+----------------------------------------------------------------
+API 5: Refresh Token
+----------------------------------------------------------------
+Task ID       : BE-1.1.5
+Endpoint      : POST /api/auth/refresh-token
+Effort        : 3 hours
+Priority      : Critical
+Tables        : RefreshTokens, Users
+Auth Required : No
+
+Request Body:
+{
+  "refreshToken": "d4f8a2b1-9c3e-4a7d-b5f6-1e2a3b4c5d6e"
+}
+
+Response Success (200):
+{
+  "success": true,
+  "data": {
+    "accessToken": "eyJhbGciOiJIUzI1NiIs...",
+    "refreshToken": "a1b2c3d4-5e6f-7a8b-9c0d-1e2f3a4b5c6d",
+    "expiresIn": 900
+  }
+}
+
+Response Error (401):
+{
+  "success": false,
+  "message": "Refresh token khong hop le hoac da het han"
+}
+
+Business Logic:
+- Tim RefreshTokens theo Token value
+- Check IsRevoked = false va ExpiredAt >= NOW
+- Neu khong hop le: return 401
+- Revoke token cu (IsRevoked = true)
+- Tao Access Token moi + Refresh Token moi
+- Luu Refresh Token moi vao DB
+- Return tokens moi
+
+================================================================
+3. Sprint 1.2: Password Management & Logout
+================================================================
+Timeline: Ngay 3-4 | Effort: 14h
+
+----------------------------------------------------------------
+API 6: Forgot Password (Send OTP)
+----------------------------------------------------------------
+Task ID       : BE-1.2.1
+Endpoint      : POST /api/auth/forgot-password
+Effort        : 3 hours
+Priority      : Critical
+Tables        : Users, OtpCodes
+Auth Required : No (Public API)
+
+Request Body:
+{
+  "email": "tranthilan@gmail.com"
+}
+
+Response Success (200):
+{
+  "success": true,
+  "message": "Ma OTP dat lai mat khau da duoc gui den email cua ban"
+}
+
+Response Error (404):
+{
+  "success": false,
+  "message": "Email khong ton tai trong he thong"
+}
+
+Business Logic:
+- Check email ton tai trong Users
+- Neu khong: return 404
+- Rate limit: max 3 OTP trong 15 phut
+- Huy OTP RESET_PASSWORD cu chua dung
+- Sinh OTP 6 so, luu OtpCodes: Type = 'RESET_PASSWORD', ExpiredAt = NOW + 5 phut
+- Gui OTP qua Email
+
+----------------------------------------------------------------
+API 7: Reset Password
+----------------------------------------------------------------
+Task ID       : BE-1.2.2
+Endpoint      : POST /api/auth/reset-password
+Effort        : 3 hours
+Priority      : Critical
+Tables        : OtpCodes, Users, RefreshTokens
+Auth Required : No (Public API)
+
+Request Body:
+{
+  "email": "tranthilan@gmail.com",
+  "otpCode": "593712",
+  "newPassword": "NewPassword@456"
+}
+
+Validation Rules:
+Field        | Rules
+-------------|-------------------------------------------
+email        | Required, valid email
+otpCode      | Required, 6 digits
+newPassword  | Required, min 6 chars
+
+Response Success (200):
+{
+  "success": true,
+  "message": "Dat lai mat khau thanh cong. Vui long dang nhap lai."
+}
+
+Business Logic:
+- Verify OTP: tim OtpCodes theo Email + Type = 'RESET_PASSWORD' + IsUsed = false
+- Check Code khop va ExpiredAt >= NOW
+- Neu hop le: set IsUsed = true
+- Hash newPassword bang BCrypt
+- Cap nhat Users.Password
+- Revoke tat ca RefreshTokens cua user (bao mat)
+
+----------------------------------------------------------------
+API 8: Change Password
+----------------------------------------------------------------
+Task ID       : BE-1.2.3
+Endpoint      : PUT /api/auth/change-password
+Effort        : 4 hours
+Priority      : High
+Tables        : Users, OtpCodes, RefreshTokens
+Auth Required : Yes (All Roles)
+
+Request Body:
+{
+  "currentPassword": "MyPassword@123",
+  "newPassword": "NewSecurePass@789",
+  "otpCode": "847261"
+}
+
+Validation Rules:
+Field            | Rules
+-----------------|-------------------------------------------
+currentPassword  | Required
+newPassword      | Required, min 6 chars, khac currentPassword
+otpCode          | Required, 6 digits
+
+Flow:
+Buoc 1: Client goi POST /api/auth/resend-otp voi type = "RESET_PASSWORD" de nhan OTP
+Buoc 2: Client goi PUT /api/auth/change-password voi currentPassword + newPassword + otpCode
+
+Response Success (200):
+{
+  "success": true,
+  "message": "Doi mat khau thanh cong"
+}
+
+Response Error (400):
+{
+  "success": false,
+  "message": "Mat khau hien tai khong dung"
+}
+
+Business Logic:
+- Lay userId tu JWT token
+- Verify currentPassword bang BCrypt.Verify()
+- Verify OTP (RESET_PASSWORD type)
+- Hash newPassword, cap nhat Users.Password
+- Revoke tat ca RefreshTokens cu cua user
+- Set OTP IsUsed = true
+
+----------------------------------------------------------------
+API 9: Logout
+----------------------------------------------------------------
+Task ID       : BE-1.2.4
+Endpoint      : POST /api/auth/logout
+Effort        : 2 hours
+Priority      : High
+Tables        : RefreshTokens
+Auth Required : Yes (All Roles)
+
+Request Body:
+{
+  "refreshToken": "d4f8a2b1-9c3e-4a7d-b5f6-1e2a3b4c5d6e"
+}
+
+Response Success (200):
+{
+  "success": true,
+  "message": "Dang xuat thanh cong"
+}
+
+Business Logic:
+- Lay userId tu JWT token
+- Tim RefreshTokens theo Token value + UserId
+- Set IsRevoked = true
+- Client tu xoa Access Token phia local
+
+----------------------------------------------------------------
+API 10: Get Users List (Admin)
+----------------------------------------------------------------
+Task ID       : BE-1.2.5
+Endpoint      : GET /api/admin/users
+Effort        : 2 hours
+Priority      : High
+Tables        : Users
+Auth Required : Yes (Admin only, Role = 1)
+
+Query Parameters:
+Parameter  | Type    | Default | Description
+-----------|---------|---------|----------------------------
+page       | int     | 1       | So trang
+pageSize   | int     | 20      | So user moi trang (max 50)
+role       | int?    | null    | Filter theo Role (1-4)
+isActive   | bool?   | null    | Filter theo trang thai
+search     | string? | null    | Tim theo ten, email, phone
+
+Example Request:
+GET /api/admin/users?page=1&pageSize=20&role=3&search=tran
+
+Response Success (200):
+{
+  "success": true,
+  "data": {
+    "items": [
+      {
+        "userId": 3,
+        "username": "tranthilan",
+        "email": "tranthilan@gmail.com",
+        "phone": "0912345678",
+        "fullName": "Tran Thi Lan",
+        "gender": "FEMALE",
+        "role": 3,
+        "isActive": true,
+        "isEmailVerified": true,
+        "createdAt": "2026-02-01T08:00:00Z"
+      }
+    ],
+    "pagination": {
+      "currentPage": 1,
+      "pageSize": 20,
+      "totalItems": 45,
+      "totalPages": 3,
+      "hasNext": true,
+      "hasPrevious": false
+    }
+  }
+}
+
+Business Logic:
+- Verify caller Role = 1 (Admin)
+- Search: ILIKE tren FullName, Email, Phone
+- Filter theo Role, IsActive
+- Pagination: OFFSET + LIMIT
+- KHONG tra ve truong Password
+
+================================================================
+4. Sprint 1.3: User Profile, Body Profile & Addresses
+================================================================
+Timeline: Ngay 5-6 | Effort: 18h
+
+----------------------------------------------------------------
+API 11: Get User Profile
+----------------------------------------------------------------
+Task ID       : BE-1.3.1
+Endpoint      : GET /api/users/profile
+Effort        : 2 hours
+Priority      : Critical
+Tables        : Users, UserBodyProfiles
+Auth Required : Yes (All Roles)
+
+Response Success (200):
+{
+  "success": true,
+  "data": {
+    "userId": 3,
+    "username": "tranthilan",
+    "email": "tranthilan@gmail.com",
+    "phone": "0912345678",
+    "fullName": "Tran Thi Lan",
+    "avatarUrl": "https://res.cloudinary.com/bigsize/avatar-3.jpg",
+    "gender": "FEMALE",
+    "dateOfBirth": "1995-08-15",
+    "role": 3,
+    "isEmailVerified": true,
+    "hasBodyProfile": true,
+    "createdAt": "2026-02-01T08:00:00Z"
+  }
+}
+
+Business Logic:
+- Lay userId tu JWT token
+- Query Users theo Id
+- Check co UserBodyProfiles record khong (hasBodyProfile)
+- KHONG tra ve Password
+
+----------------------------------------------------------------
+API 12: Update User Profile
+----------------------------------------------------------------
+Task ID       : BE-1.3.2
+Endpoint      : PUT /api/users/profile
+Effort        : 2 hours
+Priority      : Critical
+Tables        : Users
+Auth Required : Yes (All Roles)
+
+Request Body:
+{
+  "fullName": "Tran Thi Lan Anh",
+  "phone": "0912345679",
+  "gender": "FEMALE",
+  "dateOfBirth": "1995-08-15",
+  "avatarUrl": "https://res.cloudinary.com/bigsize/avatar-3-new.jpg"
+}
+
+Validation Rules:
+Field       | Rules
+------------|-------------------------------------------
+fullName    | Optional, 2-100 chars
+phone       | Optional, 10-11 digits, unique
+gender      | Optional, enum: MALE, FEMALE, OTHER
+dateOfBirth | Optional, valid date, must be in the past
+avatarUrl   | Optional, valid URL
+
+Response Success (200):
+{
+  "success": true,
+  "message": "Cap nhat ho so thanh cong",
+  "data": {
+    "userId": 3,
+    "fullName": "Tran Thi Lan Anh",
+    "phone": "0912345679",
+    "gender": "FEMALE",
+    "dateOfBirth": "1995-08-15",
+    "avatarUrl": "https://res.cloudinary.com/bigsize/avatar-3-new.jpg"
+  }
+}
+
+Business Logic:
+- Lay userId tu JWT token
+- Check phone unique (neu thay doi)
+- Chi update cac field duoc gui (partial update)
+- UpdatedAt tu dong cap nhat qua trigger
+
+----------------------------------------------------------------
+API 13: Get Body Profile
+----------------------------------------------------------------
+Task ID       : BE-1.3.3
+Endpoint      : GET /api/users/body-profile
+Effort        : 2 hours
+Priority      : Critical
+Tables        : UserBodyProfiles
+Auth Required : Yes (Customer)
+
+Response Success (200) - Co body profile:
+{
+  "success": true,
+  "data": {
+    "height": 165.00,
+    "weight": 85.00,
+    "bust": 105.00,
+    "waist": 90.00,
+    "hips": 110.00,
+    "arm": 38.00,
+    "thigh": 65.00,
+    "bodyShape": "PEAR",
+    "fitPreference": "Regular",
+    "updatedAt": "2026-02-15T10:30:00Z"
+  }
+}
+
+Response Success (200) - Chua co body profile:
+{
+  "success": true,
+  "data": null,
+  "message": "Ban chua nhap ho so so do. Hay cap nhat de AI tu van size chinh xac hon!"
+}
+
+Business Logic:
+- Lay userId tu JWT token
+- Query UserBodyProfiles theo UserId (UNIQUE)
+- Neu chua co record: tra ve null voi message goi y
+
+----------------------------------------------------------------
+API 14: Create / Update Body Profile
+----------------------------------------------------------------
+Task ID       : BE-1.3.4
+Endpoint      : PUT /api/users/body-profile
+Effort        : 3 hours
+Priority      : Critical
+Tables        : UserBodyProfiles
+Auth Required : Yes (Customer)
+
+Request Body:
+{
+  "height": 165.00,
+  "weight": 85.00,
+  "bust": 105.00,
+  "waist": 90.00,
+  "hips": 110.00,
+  "arm": 38.00,
+  "thigh": 65.00,
+  "bodyShape": "PEAR",
+  "fitPreference": "Regular"
+}
+
+Validation Rules:
+Field          | Rules
+---------------|-------------------------------------------
+height         | Optional, 100-250 (cm)
+weight         | Optional, 30-300 (kg)
+bust           | Optional, 60-200 (cm)
+waist          | Optional, 50-200 (cm)
+hips           | Optional, 60-200 (cm)
+arm            | Optional, 20-80 (cm)
+thigh          | Optional, 30-100 (cm)
+bodyShape      | Optional, enum: PEAR, APPLE, HOURGLASS, RECTANGLE, INVERTED_TRIANGLE
+fitPreference  | Optional, enum: Tight, Regular, Loose
+
+Response Success (200):
+{
+  "success": true,
+  "message": "Cap nhat ho so so do thanh cong",
+  "data": {
+    "height": 165.00,
+    "weight": 85.00,
+    "bust": 105.00,
+    "waist": 90.00,
+    "hips": 110.00,
+    "arm": 38.00,
+    "thigh": 65.00,
+    "bodyShape": "PEAR",
+    "fitPreference": "Regular",
+    "updatedAt": "2026-02-27T14:00:00Z"
+  }
+}
+
+Business Logic:
+- Lay userId tu JWT token
+- Check UserBodyProfiles co record voi UserId nay khong
+- Neu CHUA co: INSERT record moi (UPSERT)
+- Neu DA co: UPDATE cac field
+- Day la TINH NANG COT LOI cua Big Size App
+- Data nay se duoc Chat AI va Size Recommendation su dung
+- UpdatedAt tu dong cap nhat
+
+SQL Query Structure:
+INSERT INTO "UserBodyProfiles" ("UserId","Height","Weight","Bust","Waist","Hips","Arm","Thigh","BodyShape","FitPreference")
+VALUES (@userId, @height, @weight, @bust, @waist, @hips, @arm, @thigh, @bodyShape, @fitPreference)
+ON CONFLICT ("UserId") DO UPDATE SET
+  "Height" = @height, "Weight" = @weight, "Bust" = @bust,
+  "Waist" = @waist, "Hips" = @hips, "Arm" = @arm,
+  "Thigh" = @thigh, "BodyShape" = @bodyShape,
+  "FitPreference" = @fitPreference, "UpdatedAt" = NOW();
+
+----------------------------------------------------------------
+API 15: Get Addresses List
+----------------------------------------------------------------
+Task ID       : BE-1.3.5
+Endpoint      : GET /api/users/addresses
+Effort        : 2 hours
+Priority      : High
+Tables        : UserAddresses
+Auth Required : Yes (Customer)
+
+Response Success (200):
+{
+  "success": true,
+  "data": [
+    {
+      "addressId": 1,
+      "receiverName": "Tran Thi Lan",
+      "phone": "0912345678",
+      "addressLine": "123 Nguyen Trai, P.Ben Thanh",
+      "ward": "Phuong Ben Thanh",
+      "district": "Quan 1",
+      "city": "TP. Ho Chi Minh",
+      "latitude": 10.7726890,
+      "longitude": 106.6980610,
+      "isDefault": true,
+      "createdAt": "2026-02-01T08:00:00Z"
+    },
+    {
+      "addressId": 2,
+      "receiverName": "Tran Thi Lan",
+      "phone": "0912345678",
+      "addressLine": "456 Le Van Viet, P.Tang Nhon Phu A",
+      "ward": "Phuong Tang Nhon Phu A",
+      "district": "TP. Thu Duc",
+      "city": "TP. Ho Chi Minh",
+      "latitude": 10.8484590,
+      "longitude": 106.7825250,
+      "isDefault": false,
+      "createdAt": "2026-02-10T09:00:00Z"
+    }
+  ]
+}
+
+Business Logic:
+- Lay userId tu JWT token
+- Query tat ca UserAddresses theo UserId
+- Sap xep: IsDefault = true len dau, sau do theo CreatedAt DESC
+
+----------------------------------------------------------------
+API 16: Add New Address
+----------------------------------------------------------------
+Task ID       : BE-1.3.6
+Endpoint      : POST /api/users/addresses
+Effort        : 2 hours
+Priority      : High
+Tables        : UserAddresses
+Auth Required : Yes (Customer)
+
+Request Body:
+{
+  "receiverName": "Tran Thi Lan",
+  "phone": "0912345678",
+  "addressLine": "789 Pham Van Dong, P.Linh Trung",
+  "ward": "Phuong Linh Trung",
+  "district": "TP. Thu Duc",
+  "city": "TP. Ho Chi Minh",
+  "latitude": 10.8590000,
+  "longitude": 106.7740000,
+  "isDefault": false
+}
+
+Validation Rules:
+Field        | Rules
+-------------|-------------------------------------------
+receiverName | Required, 2-100 chars
+phone        | Required, 10-11 digits
+addressLine  | Required, max 255 chars
+district     | Required, max 100 chars
+city         | Required, max 100 chars
+ward         | Optional, max 100 chars
+latitude     | Optional, -90 to 90
+longitude    | Optional, -180 to 180
+isDefault    | Optional, default false
+
+Response Success (201):
+{
+  "success": true,
+  "message": "Them dia chi thanh cong",
+  "data": {
+    "addressId": 3,
+    "receiverName": "Tran Thi Lan",
+    "addressLine": "789 Pham Van Dong, P.Linh Trung",
+    "isDefault": false
+  }
+}
+
+Business Logic:
+- Lay userId tu JWT token
+- Neu isDefault = true: cap nhat tat ca dia chi khac cua user IsDefault = false truoc
+- Neu day la dia chi dau tien: tu dong set IsDefault = true
+- Insert UserAddresses
+
+----------------------------------------------------------------
+API 17: Update Address
+----------------------------------------------------------------
+Task ID       : BE-1.3.7
+Endpoint      : PUT /api/users/addresses/{addressId}
+Effort        : 2 hours
+Priority      : High
+Tables        : UserAddresses
+Auth Required : Yes (Customer)
+
+Path Parameters:
+addressId: ID cua dia chi (required)
+
+Request Body: (giong Add Address)
+
+Response Success (200):
+{
+  "success": true,
+  "message": "Cap nhat dia chi thanh cong"
+}
+
+Response Error (404):
+{
+  "success": false,
+  "message": "Dia chi khong ton tai"
+}
+
+Business Logic:
+- Verify addressId thuoc ve userId hien tai
+- Neu khong: return 404
+- Update cac field
+- Neu isDefault = true: reset IsDefault cua cac dia chi khac
+
+----------------------------------------------------------------
+API 18: Delete Address
+----------------------------------------------------------------
+Task ID       : BE-1.3.8
+Endpoint      : DELETE /api/users/addresses/{addressId}
+Effort        : 1 hour
+Priority      : Medium
+Tables        : UserAddresses
+Auth Required : Yes (Customer)
+
+Response Success (200):
+{
+  "success": true,
+  "message": "Xoa dia chi thanh cong"
+}
+
+Business Logic:
+- Verify addressId thuoc ve userId hien tai
+- DELETE record
+- Neu dia chi bi xoa la IsDefault = true: tu dong set dia chi con lai dau tien lam default
+
+----------------------------------------------------------------
+API 19: Set Default Address
+----------------------------------------------------------------
+Task ID       : BE-1.3.9
+Endpoint      : PUT /api/users/addresses/{addressId}/set-default
+Effort        : 1 hour
+Priority      : Medium
+Tables        : UserAddresses
+Auth Required : Yes (Customer)
+
+Response Success (200):
+{
+  "success": true,
+  "message": "Da dat lam dia chi mac dinh"
+}
+
+Business Logic:
+- Verify addressId thuoc ve userId
+- Set tat ca UserAddresses cua user: IsDefault = false
+- Set addressId nay: IsDefault = true
+
+SQL Query Structure:
+UPDATE "UserAddresses" SET "IsDefault" = false WHERE "UserId" = @userId;
+UPDATE "UserAddresses" SET "IsDefault" = true WHERE "Id" = @addressId AND "UserId" = @userId;
+
+================================================================
+5. Sprint 1.4: Testing & Bug Fixes
+================================================================
+Timeline: Ngay 7 | Effort: 8h
+
+Task ID: BE-1.4.1
+Effort: 8 hours
+Priority: Critical
+
+Test Checklist - Registration & OTP:
+[ ] POST /api/auth/register - tao tai khoan thanh cong
+[ ] POST /api/auth/register - reject email da ton tai
+[ ] POST /api/auth/register - reject username da ton tai
+[ ] POST /api/auth/register - validate input fields
+[ ] POST /api/auth/verify-email - verify OTP thanh cong
+[ ] POST /api/auth/verify-email - reject OTP sai
+[ ] POST /api/auth/verify-email - reject OTP het han
+[ ] POST /api/auth/resend-otp - gui lai OTP thanh cong
+[ ] POST /api/auth/resend-otp - reject qua 3 lan
+
+Test Checklist - Login & Token:
+[ ] POST /api/auth/login - dang nhap bang email thanh cong
+[ ] POST /api/auth/login - dang nhap bang phone thanh cong
+[ ] POST /api/auth/login - reject sai password
+[ ] POST /api/auth/login - reject tai khoan chua verify
+[ ] POST /api/auth/login - reject tai khoan bi khoa
+[ ] POST /api/auth/refresh-token - refresh thanh cong
+[ ] POST /api/auth/refresh-token - reject token het han
+[ ] POST /api/auth/refresh-token - reject token da revoke
+[ ] POST /api/auth/logout - revoke refresh token
+
+Test Checklist - Password:
+[ ] POST /api/auth/forgot-password - gui OTP thanh cong
+[ ] POST /api/auth/forgot-password - reject email khong ton tai
+[ ] POST /api/auth/reset-password - dat lai mat khau thanh cong
+[ ] PUT /api/auth/change-password - doi mat khau thanh cong
+[ ] PUT /api/auth/change-password - reject sai mat khau cu
+
+Test Checklist - Profile & Body Profile:
+[ ] GET /api/users/profile - tra ve thong tin dung
+[ ] PUT /api/users/profile - cap nhat thanh cong
+[ ] PUT /api/users/profile - reject phone da ton tai
+[ ] GET /api/users/body-profile - tra ve data hoac null
+[ ] PUT /api/users/body-profile - tao moi body profile
+[ ] PUT /api/users/body-profile - cap nhat body profile
+
+Test Checklist - Addresses:
+[ ] GET /api/users/addresses - tra ve danh sach dia chi
+[ ] POST /api/users/addresses - them dia chi moi
+[ ] POST /api/users/addresses - auto default dia chi dau tien
+[ ] PUT /api/users/addresses/{id} - cap nhat dia chi
+[ ] PUT /api/users/addresses/{id} - reject dia chi cua user khac
+[ ] DELETE /api/users/addresses/{id} - xoa dia chi
+[ ] PUT /api/users/addresses/{id}/set-default - dat dia chi mac dinh
+
+Test Checklist - Authorization:
+[ ] Profile APIs yeu cau authentication
+[ ] Body Profile chi Customer truy cap
+[ ] Admin users API chi Admin truy cap
+[ ] User khong truy cap duoc dia chi cua user khac
+
+================================================================
+6. Tong Ket Task
+================================================================
+
+Task ID   | Task Name                    | Tables              | Effort | Pri
+----------|------------------------------|---------------------|--------|----
+BE-1.1.1  | API: Register                | Users, OtpCodes     | 4h     | C
+BE-1.1.2  | API: Verify Email OTP        | OtpCodes, Users     | 3h     | C
+BE-1.1.3  | API: Resend OTP              | OtpCodes            | 2h     | H
+BE-1.1.4  | API: Login                   | Users, RefreshTokens| 4h     | C
+BE-1.1.5  | API: Refresh Token           | RefreshTokens       | 3h     | C
+BE-1.2.1  | API: Forgot Password         | Users, OtpCodes     | 3h     | C
+BE-1.2.2  | API: Reset Password          | OtpCodes, Users     | 3h     | C
+BE-1.2.3  | API: Change Password         | Users, OtpCodes     | 4h     | H
+BE-1.2.4  | API: Logout                  | RefreshTokens       | 2h     | H
+BE-1.2.5  | API: Get Users (Admin)       | Users               | 2h     | H
+BE-1.3.1  | API: Get Profile             | Users               | 2h     | C
+BE-1.3.2  | API: Update Profile          | Users               | 2h     | C
+BE-1.3.3  | API: Get Body Profile        | UserBodyProfiles    | 2h     | C
+BE-1.3.4  | API: Update Body Profile     | UserBodyProfiles    | 3h     | C
+BE-1.3.5  | API: Get Addresses           | UserAddresses       | 2h     | H
+BE-1.3.6  | API: Add Address             | UserAddresses       | 2h     | H
+BE-1.3.7  | API: Update Address          | UserAddresses       | 2h     | H
+BE-1.3.8  | API: Delete Address          | UserAddresses       | 1h     | M
+BE-1.3.9  | API: Set Default Address     | UserAddresses       | 1h     | M
+BE-1.4.1  | Testing & Bug Fixes          | -                   | 8h     | C
+
+Priority: C = Critical, H = High, M = Medium
+Total Effort: 55 hours
+
+API Endpoints Summary:
+
+Method | Endpoint                              | Auth     | Description
+-------|---------------------------------------|----------|---------------------------
+POST   | /api/auth/register                    | No       | Dang ky tai khoan
+POST   | /api/auth/verify-email                | No       | Xac thuc OTP email
+POST   | /api/auth/resend-otp                  | No       | Gui lai ma OTP
+POST   | /api/auth/login                       | No       | Dang nhap
+POST   | /api/auth/refresh-token               | No       | Lam moi token
+POST   | /api/auth/forgot-password             | No       | Gui OTP quen mat khau
+POST   | /api/auth/reset-password              | No       | Dat lai mat khau
+PUT    | /api/auth/change-password             | Yes      | Doi mat khau
+POST   | /api/auth/logout                      | Yes      | Dang xuat
+GET    | /api/admin/users                      | Admin    | Danh sach nguoi dung
+GET    | /api/users/profile                    | Yes      | Xem ho so ca nhan
+PUT    | /api/users/profile                    | Yes      | Cap nhat ho so
+GET    | /api/users/body-profile               | Customer | Xem ho so so do
+PUT    | /api/users/body-profile               | Customer | Cap nhat so do co the
+GET    | /api/users/addresses                  | Customer | Danh sach dia chi
+POST   | /api/users/addresses                  | Customer | Them dia chi moi
+PUT    | /api/users/addresses/{id}             | Customer | Cap nhat dia chi
+DELETE | /api/users/addresses/{id}             | Customer | Xoa dia chi
+PUT    | /api/users/addresses/{id}/set-default | Customer | Dat dia chi mac dinh
+
+--- END OF MILESTONE 1 ---

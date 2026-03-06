@@ -49,6 +49,10 @@ public partial class User
 
     public virtual ICollection<RefreshToken> RefreshTokens { get; set; } = new List<RefreshToken>();
 
+    public virtual ICollection<Refund> RefundProcessedByNavigations { get; set; } = new List<Refund>();
+
+    public virtual ICollection<Refund> RefundUsers { get; set; } = new List<Refund>();
+
     public virtual ICollection<ShipperLocation> ShipperLocations { get; set; } = new List<ShipperLocation>();
 
     public virtual ICollection<UserAddress> UserAddresses { get; set; } = new List<UserAddress>();
