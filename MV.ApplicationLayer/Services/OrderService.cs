@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using MV.ApplicationLayer.ServiceInterfaces;
 using MV.DomainLayer.DTOs.Common;
 using MV.DomainLayer.DTOs.Order.Request;
@@ -18,6 +19,7 @@ namespace MV.ApplicationLayer.Services
         private readonly IVoucherRepository _voucherRepository;
         private readonly IUserRepository _userRepository;
         private readonly INotificationRepository _notificationRepository;
+        private readonly ILogger<OrderService> _logger;
 
         public OrderService(
             FashionDbContext context,
@@ -26,7 +28,8 @@ namespace MV.ApplicationLayer.Services
             IUserAddressRepository addressRepository,
             IVoucherRepository voucherRepository,
             IUserRepository userRepository,
-            INotificationRepository notificationRepository)
+            INotificationRepository notificationRepository,
+            ILogger<OrderService> logger)
         {
             _context = context;
             _orderRepository = orderRepository;
@@ -35,6 +38,7 @@ namespace MV.ApplicationLayer.Services
             _voucherRepository = voucherRepository;
             _userRepository = userRepository;
             _notificationRepository = notificationRepository;
+            _logger = logger;
         }
 
         #region Customer APIs
@@ -150,7 +154,7 @@ namespace MV.ApplicationLayer.Services
                     _context.Vouchers.Update(voucher);
                 }
 
-                decimal shippingFee = 30000;
+                decimal shippingFee = 5000;
                 decimal total = subtotal + shippingFee - discount;
 
                 // 6. Generate order code
@@ -197,10 +201,16 @@ namespace MV.ApplicationLayer.Services
                 // 10. Deduct stock + increase sold count
                 foreach (var ci in cartItems)
                 {
-                    await _context.ProductVariants
-                        .Where(v => v.Id == ci.ProductVariantId)
+                    var rowsUpdated = await _context.ProductVariants
+                        .Where(v => v.Id == ci.ProductVariantId && (v.StockQuantity ?? 0) >= ci.Quantity)
                         .ExecuteUpdateAsync(s => s.SetProperty(
                             v => v.StockQuantity, v => (v.StockQuantity ?? 0) - ci.Quantity));
+
+                    if (rowsUpdated == 0)
+                    {
+                        await transaction.RollbackAsync();
+                        return ApiResponse<CreateOrderResponse>.ErrorResponse("Some products ran out of stock while processing your order.");
+                    }
 
                     await _context.Products
                         .Where(p => p.Id == ci.ProductVariant.ProductId)
@@ -251,6 +261,7 @@ namespace MV.ApplicationLayer.Services
                     Discount = discount,
                     Total = total,
                     PaymentMethod = request.PaymentMethod,
+                    PaymentUrl = request.PaymentMethod == "SEPAY" ? $"/api/payments/{order.Id}/checkout" : null,
                     Items = orderItemsList.Select(oi => new OrderItemSummary
                     {
                         ProductName = oi.ProductName,
@@ -362,6 +373,17 @@ namespace MV.ApplicationLayer.Services
                                 .ExecuteUpdateAsync(s => s.SetProperty(
                                     p => p.SoldCount, p => Math.Max(0, (p.SoldCount ?? 0) - oi.Quantity)));
                         }
+                    }
+                }
+
+                // Restore voucher if used
+                if (order.VoucherId.HasValue)
+                {
+                    var voucher = await _context.Vouchers.FirstOrDefaultAsync(v => v.Id == order.VoucherId.Value);
+                    if (voucher != null)
+                    {
+                        voucher.UsedCount = Math.Max(0, (voucher.UsedCount ?? 0) - 1);
+                        _context.Vouchers.Update(voucher);
                     }
                 }
 
@@ -584,6 +606,17 @@ namespace MV.ApplicationLayer.Services
                     }
                 }
 
+                // Restore voucher if used
+                if (order.VoucherId.HasValue)
+                {
+                    var voucher = await _context.Vouchers.FirstOrDefaultAsync(v => v.Id == order.VoucherId.Value);
+                    if (voucher != null)
+                    {
+                        voucher.UsedCount = Math.Max(0, (voucher.UsedCount ?? 0) - 1);
+                        _context.Vouchers.Update(voucher);
+                    }
+                }
+
                 // Handle refund if SePay completed
                 if (order.Payment != null && order.Payment.PaymentMethod == "SEPAY"
                     && order.Payment.Status == "COMPLETED")
@@ -607,6 +640,9 @@ namespace MV.ApplicationLayer.Services
 
                 await _context.SaveChangesAsync();
                 await transaction.CommitAsync();
+
+                // Admin adminId is not explicitly recorded here, but we can log that an Admin triggered this endpoint using _logger.
+                _logger.LogWarning("AUDIT: Admin cancelled Order {OrderId}. Reason: {Reason} at {Time}", orderId, request.CancelReason, DateTime.UtcNow);
 
                 return ApiResponse<object>.SuccessResponse("Order cancelled successfully.");
             }

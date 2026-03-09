@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MV.ApplicationLayer.ServiceInterfaces;
 using MV.DomainLayer.Configuration;
@@ -20,17 +21,20 @@ namespace MV.ApplicationLayer.Services
         private readonly IChatAiHistoryRepository _chatRepository;
         private readonly GeminiSettings _geminiSettings;
         private readonly IHttpClientFactory _httpClientFactory;
+        private readonly ILogger<ChatAiService> _logger;
 
         public ChatAiService(
             FashionDbContext context,
             IChatAiHistoryRepository chatRepository,
             IOptions<GeminiSettings> geminiSettings,
-            IHttpClientFactory httpClientFactory)
+            IHttpClientFactory httpClientFactory,
+            ILogger<ChatAiService> logger)
         {
             _context = context;
             _chatRepository = chatRepository;
             _geminiSettings = geminiSettings.Value;
             _httpClientFactory = httpClientFactory;
+            _logger = logger;
         }
 
         // ==================== API 7: Send Message to AI Chat ====================
@@ -82,7 +86,8 @@ namespace MV.ApplicationLayer.Services
             }
             catch (Exception ex)
             {
-                aiResponse = $"I'm sorry, I'm unable to process your request at the moment. Please try again later. (Error: {ex.Message})";
+                _logger.LogError(ex, "Error calling Gemini API");
+                aiResponse = "Đã xảy ra lỗi hệ thống AI khi xử lý. Vui lòng thử lại sau.";
             }
 
             // 8. Extract suggested product IDs from AI response

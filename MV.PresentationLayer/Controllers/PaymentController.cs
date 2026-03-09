@@ -1,10 +1,13 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using MV.ApplicationLayer.ServiceInterfaces;
 using MV.DomainLayer.DTOs.Common;
 using MV.DomainLayer.DTOs.Payment.Request;
+using MV.InfrastructureLayer.Interfaces;
 using Swashbuckle.AspNetCore.Annotations;
 using System.Security.Claims;
+using System.Text.Json;
 
 namespace MV.PresentationLayer.Controllers
 {
@@ -13,10 +16,14 @@ namespace MV.PresentationLayer.Controllers
     public class PaymentController : ControllerBase
     {
         private readonly IPaymentService _paymentService;
+        private readonly IOrderRepository _orderRepo;
+        private readonly IConfiguration _configuration;
 
-        public PaymentController(IPaymentService paymentService)
+        public PaymentController(IPaymentService paymentService, IOrderRepository orderRepo, IConfiguration configuration)
         {
             _paymentService = paymentService;
+            _orderRepo = orderRepo;
+            _configuration = configuration;
         }
 
         /// <summary>
@@ -82,6 +89,151 @@ namespace MV.PresentationLayer.Controllers
                 return NotFound(result);
 
             return Ok(result);
+        }
+
+        // ==================== SEPAY UI CHECKOUT ====================
+
+        [HttpGet("{orderId}/poll-status")]
+        [AllowAnonymous]
+        [ApiExplorerSettings(IgnoreApi = true)]
+        public async Task<IActionResult> PollPaymentStatus(int orderId)
+        {
+            var order = await _orderRepo.GetByIdWithDetailsAsync(orderId);
+            if (order == null || order.Payment == null)
+                return NotFound();
+            
+            return Ok(new { status = order.Payment.Status });
+        }
+
+        [HttpGet("{orderId}/checkout")]
+        [AllowAnonymous]
+        [SwaggerOperation(Summary = "Redirect to SePay Checkout UI")]
+        public async Task<IActionResult> RedirectToSepayCheckout(
+            int orderId,
+            [FromQuery] string? successUrl,
+            [FromQuery] string? errorUrl,
+            [FromQuery] string? cancelUrl)
+        {
+            var order = await _orderRepo.GetByIdWithDetailsAsync(orderId);
+            if (order == null) return NotFound("Đơn hàng không tồn tại");
+
+            var payment = order.Payment;
+            if (payment == null) return NotFound("Chưa tạo record thanh toán");
+
+            if (payment.PaymentMethod != "SEPAY")
+                return BadRequest("Not a SEPAY payment");
+
+            var baseUrl = $"{Request.Scheme}://{Request.Host}";
+            var backendSuccessUrl = $"{baseUrl}/api/payments/callback/success?orderCode={order.OrderCode}";
+            if (!string.IsNullOrEmpty(successUrl)) 
+                backendSuccessUrl += $"&redirectUrl={Uri.EscapeDataString(successUrl)}";
+
+            if (payment.Status == "COMPLETED")
+                return Redirect(backendSuccessUrl);
+
+            var finalCancelUrl = cancelUrl ?? "/";
+
+            var sepayConfig = _configuration.GetSection("SePay");
+            var bankName = sepayConfig["BankName"] ?? string.Empty;
+            var accountNumber = sepayConfig["AccountNumber"] ?? string.Empty;
+            var accountName = sepayConfig["AccountName"] ?? string.Empty;
+
+            if (string.IsNullOrEmpty(payment.PaymentData))
+            {
+                await _paymentService.CreateSePayPaymentAsync(order.UserId, orderId);
+                order = await _orderRepo.GetByIdWithDetailsAsync(orderId); // reload
+                payment = order!.Payment;
+            }
+
+            string qrCodeUrl = "";
+            if (!string.IsNullOrEmpty(payment!.PaymentData))
+            {
+                try
+                {
+                    var data = JsonDocument.Parse(payment.PaymentData);
+                    qrCodeUrl = data.RootElement.GetProperty("qrCodeUrl").GetString() ?? "";
+                } catch {}
+            }
+
+            var expiredAt = (payment.CreatedAt ?? DateTime.Now).AddMinutes(int.Parse(sepayConfig["PaymentExpiryMinutes"] ?? "10"));
+            var remainingSeconds = Math.Max(0, (int)(expiredAt - DateTime.Now).TotalSeconds);
+            if (remainingSeconds <= 0 || payment.Status == "EXPIRED" || order.Status == "CANCELLED")
+            {
+                return Content($@"
+                    <html><head><meta http-equiv='refresh' content='3;url={finalCancelUrl}'></head>
+                    <body style='font-family: Arial; text-align: center; padding: 50px;'>
+                        <h2 style='color: red;'>Đơn hàng đã hết hạn hoặc bị huỷ!</h2>
+                    </body></html>", "text/html");
+            }
+
+            var minutes = remainingSeconds / 60;
+            var seconds = remainingSeconds % 60;
+
+            var html = $@"
+<!DOCTYPE html>
+<html lang='vi'>
+<head>
+    <meta charset='utf-8'>
+    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+    <title>Thanh toán đơn hàng {order.OrderCode}</title>
+    <link href='https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap' rel='stylesheet'>
+    <style>
+        body {{ font-family: 'Inter', sans-serif; background: #f5f7fa; margin: 0; display: flex; justify-content: center; align-items: center; min-height: 100vh; }}
+        .card {{ background: white; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); padding: 40px 30px; max-width: 400px; width: 100%; text-align: center; position: relative; }}
+        .amount {{ font-size: 32px; color: #3498db; font-weight: 700; margin: 0 0 20px 0; }}
+        .qr-image {{ max-width: 100%; border-radius: 8px; border: 1px solid #e2e8f0; }}
+        .info-box {{ text-align: left; background: #f8fafc; padding: 15px; border-radius: 8px; margin-top: 20px; }}
+        .timer {{ font-size: 18px; color: red; font-weight: bold; margin-top: 15px; }}
+        .success-overlay {{ position: absolute; top:0; left:0; right:0; bottom:0; background: white; display: none; flex-direction: column; justify-content: center; align-items: center; border-radius: 20px; z-index: 10; }}
+    </style>
+</head>
+<body>
+    <div class='card'>
+        <h2>Thanh Toán Đơn Hàng</h2>
+        <div class='amount'>{payment.Amount:N0} VNĐ</div>
+        <img class='qr-image' src='{qrCodeUrl}' />
+        <div class='info-box'>
+            <p><strong>Ngân hàng:</strong> {bankName}</p>
+            <p><strong>Số TK:</strong> {accountNumber} ({accountName})</p>
+            <p><strong>Nội dung CK:</strong> <span style='color: red; font-weight: bold'>{order.OrderCode}</span></p>
+        </div>
+        <div class='timer'>Thời gian còn lại: <span id='timer'>{minutes:D2}:{seconds:D2}</span></div>
+        <div class='success-overlay' id='successOverlay'>
+            <h1 style='color: green;'>✓ Thành Công!</h1>
+            <p>Đang quay lại ứng dụng...</p>
+        </div>
+    </div>
+    <script>
+        let s = {remainingSeconds};
+        const t = document.getElementById('timer');
+        setInterval(() => {{
+            s--;
+            if (s<=0) window.location.href = '{finalCancelUrl}';
+            else t.innerText = Math.floor(s/60).toString().padStart(2,'0') + ':' + (s%60).toString().padStart(2,'0');
+        }}, 1000);
+        setInterval(() => {{
+            fetch('/api/payments/{orderId}/poll-status')
+                .then(r => r.json())
+                .then(d => {{
+                    if (d.status === 'COMPLETED') {{
+                        document.getElementById('successOverlay').style.display = 'flex';
+                        setTimeout(() => window.location.href = '{backendSuccessUrl}', 2000);
+                    }}
+                }});
+        }}, 3000);
+    </script>
+</body>
+</html>";
+            return Content(html, "text/html");
+        }
+
+        [HttpGet("callback/success")]
+        [AllowAnonymous]
+        public async Task<IActionResult> SepaySuccessCallback([FromQuery] string orderCode, [FromQuery] string? redirectUrl)
+        {
+            if (!string.IsNullOrEmpty(redirectUrl))
+                return Redirect($"{redirectUrl}?status=success&orderCode={orderCode}");
+            return Ok(new { success = true, message = "Payment completed", orderCode });
         }
 
         private int GetCurrentUserId()

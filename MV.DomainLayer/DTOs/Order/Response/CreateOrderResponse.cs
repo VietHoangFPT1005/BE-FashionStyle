@@ -10,6 +10,7 @@ namespace MV.DomainLayer.DTOs.Order.Response
         public decimal Discount { get; set; }
         public decimal Total { get; set; }
         public string PaymentMethod { get; set; } = null!;
+        public string? PaymentUrl { get; set; }
         public List<OrderItemSummary> Items { get; set; } = new();
         public ShippingAddressInfo ShippingAddress { get; set; } = new();
         public DateTime? CreatedAt { get; set; }

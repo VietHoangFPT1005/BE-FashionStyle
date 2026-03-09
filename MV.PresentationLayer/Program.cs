@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
@@ -26,10 +26,9 @@ namespace MV.PresentationLayer
             {
                 options.AddPolicy("AllowFrontend", policy =>
                 {
-                    policy.WithOrigins("https://localhost:7159")
+                    policy.AllowAnyOrigin()
                         .AllowAnyMethod()
-                        .AllowAnyHeader()
-                        .AllowCredentials();
+                        .AllowAnyHeader();
                 });
             });
 
@@ -186,7 +185,7 @@ namespace MV.PresentationLayer
                 app.UseSwaggerUI(); // Đã mở comment dòng này để giao diện không bị 404
             }
 
-            app.UseHttpsRedirection();
+            // app.UseHttpsRedirection(); // Đã đóng comment để cho phép Flutter HTTP (10.0.2.2) truy cập không bị lỗi 307 Redirect
             app.UseStaticFiles();
 
             // Enable CORS - must be before Authentication/Authorization
