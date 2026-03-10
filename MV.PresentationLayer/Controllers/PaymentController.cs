@@ -280,9 +280,19 @@ namespace MV.PresentationLayer.Controllers
         [AllowAnonymous]
         public async Task<IActionResult> SepaySuccessCallback([FromQuery] string orderCode, [FromQuery] string? redirectUrl)
         {
+            // Process the payment success callback
+            var result = await _paymentService.ProcessSuccessCallbackAsync(orderCode);
+
             if (!string.IsNullOrEmpty(redirectUrl))
-                return Redirect($"{redirectUrl}?status=success&orderCode={orderCode}");
-            return Ok(new { success = true, message = "Payment completed", orderCode });
+            {
+                var status = result.Success ? "success" : "error";
+                return Redirect($"{redirectUrl}?status={status}&orderCode={orderCode}");
+            }
+
+            if (!result.Success)
+                return BadRequest(result);
+
+            return Ok(result);
         }
 
         private int GetCurrentUserId()

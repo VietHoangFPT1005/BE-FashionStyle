@@ -10,5 +10,6 @@ namespace MV.ApplicationLayer.ServiceInterfaces
         Task<ApiResponse<PaymentStatusResponse>> GetPaymentStatusAsync(int userId, int orderId);
         Task ExpireOverduePaymentsAsync();
         Task<ApiResponse<PaymentStatusResponse>> VerifyPaymentManuallyAsync(int orderId, int adminUserId);
+        Task<ApiResponse<PaymentStatusResponse>> ProcessSuccessCallbackAsync(string orderCode);
     }
 }

@@ -155,8 +155,9 @@ namespace MV.PresentationLayer
             builder.Services.AddScoped<IPaymentService, PaymentService>();
             builder.Services.AddScoped<IReviewService, ReviewService>();
 
-            // Background Services - Payment expiry auto-cancel
+            // Background Services - Payment expiry auto-cancel + SePay polling
             builder.Services.AddHostedService<PaymentExpiryBackgroundService>();
+            builder.Services.AddHostedService<SepayPollingBackgroundService>();
 
             // Repositories - Milestone 4
             builder.Services.AddScoped<IShipperLocationRepository, ShipperLocationRepository>();

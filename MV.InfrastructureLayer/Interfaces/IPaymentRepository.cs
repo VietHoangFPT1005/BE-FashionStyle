@@ -9,5 +9,6 @@ namespace MV.InfrastructureLayer.Interfaces
         Task<Payment?> GetByOrderIdAsync(int orderId);
         Task<Payment?> GetByOrderCodeAsync(string orderCode);
         Task<List<Payment>> GetExpiredPendingSePayPaymentsAsync();
+        Task<List<Payment>> GetPendingSePayPaymentsAsync();
     }
 }

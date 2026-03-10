@@ -478,6 +478,117 @@ namespace MV.ApplicationLayer.Services
             }
         }
 
+        public async Task<ApiResponse<PaymentStatusResponse>> ProcessSuccessCallbackAsync(string orderCode)
+        {
+            try
+            {
+                var order = await _orderRepository.GetByOrderCodeAsync(orderCode);
+                if (order == null)
+                    return ApiResponse<PaymentStatusResponse>.ErrorResponse("Order not found.");
+
+                var payment = order.Payment;
+                if (payment == null)
+                    return ApiResponse<PaymentStatusResponse>.ErrorResponse("Payment record not found.");
+
+                if (payment.PaymentMethod != "SEPAY")
+                    return ApiResponse<PaymentStatusResponse>.ErrorResponse("Order does not use SEPAY payment method.");
+
+                // Idempotent: already completed
+                if (payment.Status == "COMPLETED")
+                {
+                    _logger.LogInformation("ProcessSuccessCallback: Payment already completed for order {OrderCode}", orderCode);
+                    return ApiResponse<PaymentStatusResponse>.SuccessResponse(new PaymentStatusResponse
+                    {
+                        OrderId = order.Id,
+                        OrderCode = order.OrderCode,
+                        PaymentMethod = payment.PaymentMethod,
+                        Amount = payment.Amount,
+                        Status = "COMPLETED",
+                        TransactionId = payment.TransactionId,
+                        PaidAt = payment.PaidAt,
+                        CreatedAt = payment.CreatedAt,
+                        ExpiredAt = payment.ExpiredAt,
+                        IsPaid = true,
+                        RemainingSeconds = 0
+                    }, "Payment already completed.");
+                }
+
+                // Only process PENDING payments
+                if (payment.Status != "PENDING")
+                    return ApiResponse<PaymentStatusResponse>.ErrorResponse(
+                        $"Cannot process payment with status '{payment.Status}'.");
+
+                using var transaction = await _context.Database.BeginTransactionAsync();
+                try
+                {
+                    // Mark payment as COMPLETED
+                    payment.Status = "COMPLETED";
+                    payment.PaidAt = DateTime.Now;
+                    payment.TransactionId = payment.TransactionId ?? $"CALLBACK-{DateTime.Now:yyyyMMddHHmmss}";
+                    await _paymentRepository.UpdateAsync(payment);
+
+                    // Auto-confirm order if PENDING
+                    if (order.Status == "PENDING")
+                    {
+                        order.Status = "CONFIRMED";
+                        order.ConfirmedAt = DateTime.Now;
+                        await _orderRepository.UpdateAsync(order);
+                        _logger.LogInformation("Order {OrderCode} auto-confirmed after success callback", orderCode);
+                    }
+
+                    await transaction.CommitAsync();
+
+                    _logger.LogInformation(
+                        "ProcessSuccessCallback: Payment completed for order {OrderCode}", orderCode);
+                }
+                catch (Exception ex)
+                {
+                    await transaction.RollbackAsync();
+                    _logger.LogError(ex, "Error processing success callback for order {OrderCode}", orderCode);
+                    throw;
+                }
+
+                // Send notification (outside transaction)
+                try
+                {
+                    await _notificationRepository.CreateAsync(new Notification
+                    {
+                        UserId = order.UserId,
+                        Type = "PAYMENT",
+                        Title = "Thanh toán thành công",
+                        Message = $"Thanh toán đơn hàng {orderCode} đã được xác nhận. Số tiền: {payment.Amount:N0}₫",
+                        Data = $"{{\"orderId\":{order.Id}}}",
+                        IsRead = false,
+                        CreatedAt = DateTime.Now
+                    });
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to create notification for order {OrderCode}", orderCode);
+                }
+
+                return ApiResponse<PaymentStatusResponse>.SuccessResponse(new PaymentStatusResponse
+                {
+                    OrderId = order.Id,
+                    OrderCode = order.OrderCode,
+                    PaymentMethod = payment.PaymentMethod,
+                    Amount = payment.Amount,
+                    Status = "COMPLETED",
+                    TransactionId = payment.TransactionId,
+                    PaidAt = payment.PaidAt,
+                    CreatedAt = payment.CreatedAt,
+                    ExpiredAt = payment.ExpiredAt,
+                    IsPaid = true,
+                    RemainingSeconds = 0
+                }, "Payment processed successfully.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unhandled error in ProcessSuccessCallbackAsync for order {OrderCode}", orderCode);
+                return ApiResponse<PaymentStatusResponse>.ErrorResponse($"System error: {ex.Message}");
+            }
+        }
+
         #region Helpers
 
         private string? ExtractOrderCode(string? content)
