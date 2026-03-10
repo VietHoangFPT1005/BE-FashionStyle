@@ -5,5 +5,6 @@ public enum PaymentStatusEnum
     PENDING,
     COMPLETED,
     FAILED,
-    EXPIRED
+    EXPIRED,
+    REFUND_PENDING
 }

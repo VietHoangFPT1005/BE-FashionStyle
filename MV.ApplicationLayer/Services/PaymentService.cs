@@ -201,7 +201,8 @@ namespace MV.ApplicationLayer.Services
                 // Verify amount matches (allow 1₫ rounding tolerance)
                 if (transferAmount > 0 && Math.Abs(transferAmount - payment.Amount) > 1)
                 {
-                    sepayTransaction.IsProcessed = true;
+                    // IsProcessed = false: logged but NOT completed, needs manual admin review
+                    sepayTransaction.IsProcessed = false;
                     await _sepayTransactionRepository.CreateAsync(sepayTransaction);
                     _logger.LogWarning("Amount mismatch for {OrderCode}: expected {Expected}, received {Received}",
                         orderCode, payment.Amount, transferAmount);

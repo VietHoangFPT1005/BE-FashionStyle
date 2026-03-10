@@ -81,7 +81,7 @@ namespace MV.ApplicationLayer.Services
                 Gender = request.Gender,
                 Role = 3, // Customer
                 IsActive = true,
-                IsEmailVerified = true // Dev mode: auto-verify
+                IsEmailVerified = false
             };
 
             var createdUser = await _userRepository.CreateAsync(user);

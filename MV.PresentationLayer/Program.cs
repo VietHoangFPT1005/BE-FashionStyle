@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using MV.ApplicationLayer.ServiceInterfaces;
@@ -107,9 +108,15 @@ namespace MV.PresentationLayer
             builder.Services.Configure<GeminiSettings>(builder.Configuration.GetSection("Gemini"));
             builder.Services.Configure<GoogleSettings>(builder.Configuration.GetSection("Google"));
 
-            // Register DbContext
+            // Register DbContext with connection pooling for production performance
+            var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+            if (!connectionString!.Contains("Maximum Pool Size", StringComparison.OrdinalIgnoreCase))
+                connectionString += ";Maximum Pool Size=20;Minimum Pool Size=1;Connection Idle Lifetime=60";
+
             builder.Services.AddDbContext<FashionDbContext>(options =>
-                options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+                options.UseNpgsql(connectionString,
+                    npgsqlOptions => npgsqlOptions.MigrationsAssembly("MV.InfrastructureLayer"))
+                .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning)));
 
             // Repositories - Milestone 1
             builder.Services.AddScoped<IUserRepository, UserRepository>();

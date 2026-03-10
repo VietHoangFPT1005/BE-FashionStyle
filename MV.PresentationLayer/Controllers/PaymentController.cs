@@ -56,8 +56,22 @@ namespace MV.PresentationLayer.Controllers
         [SwaggerOperation(Summary = "SePay Webhook - Nhận thông báo giao dịch từ SePay")]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
         public async Task<IActionResult> SePayCallback()
         {
+            // Verify SePay API key from Authorization header
+            var webhookApiKey = _configuration["SePay:WebhookApiKey"];
+            if (!string.IsNullOrEmpty(webhookApiKey))
+            {
+                var authHeader = Request.Headers["Authorization"].FirstOrDefault();
+                var providedKey = authHeader?.StartsWith("Apikey ") == true
+                    ? authHeader.Substring("Apikey ".Length).Trim()
+                    : null;
+
+                if (providedKey != webhookApiKey)
+                    return Unauthorized(ApiResponse.ErrorResponse("Invalid webhook API key."));
+            }
+
             using var reader = new StreamReader(Request.Body);
             var jsonBody = await reader.ReadToEndAsync();
 

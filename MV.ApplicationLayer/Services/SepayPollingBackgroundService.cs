@@ -162,11 +162,12 @@ namespace MV.ApplicationLayer.Services
                 if (!string.IsNullOrEmpty(orderCode))
                 {
                     // === SEVQR reference found → always try to match (safe because exact match) ===
+                    // Re-checked every poll until matched (handles orders created after initial fetch)
                     _logger.LogInformation(
                         "SePay Polling: Tx {TxId} has SEVQR ref '{OrderCode}' → trying to match",
                         tx.Id, orderCode);
 
-                    if (await TryCompleteOrder(paymentService, pendingPayments, orderCode, tx))
+                    if (await TryCompleteOrder(paymentService, paymentRepository, pendingPayments, orderCode, tx))
                     {
                         _matchedTransactionIds.Add(tx.Id);
                     }
@@ -199,22 +200,37 @@ namespace MV.ApplicationLayer.Services
 
         /// <summary>
         /// Try to complete order when SEVQR reference is found in transaction content.
+        /// First checks the in-memory pendingPayments list (fast path), then falls back to
+        /// a fresh DB lookup to handle orders created after the initial list was fetched.
         /// </summary>
         private async Task<bool> TryCompleteOrder(
             IPaymentService paymentService,
+            IPaymentRepository paymentRepository,
             List<DomainLayer.Entities.Payment> pendingPayments,
             string orderCode, SepayTransactionItem tx)
         {
-            // Find matching payment by order code
+            // Fast path: check in-memory list first (already fetched and includes Order)
             var payment = pendingPayments.FirstOrDefault(p => p.Order?.OrderCode == orderCode);
+
+            // Slow path: fresh DB lookup handles orders created after the initial pendingPayments fetch
             if (payment == null)
             {
-                _logger.LogDebug("SePay Polling: No pending payment found for order code {OrderCode}", orderCode);
-                return false;
+                _logger.LogDebug("SePay Polling: {OrderCode} not in cached list, doing fresh DB lookup...", orderCode);
+                payment = await paymentRepository.GetByOrderCodeAsync(orderCode);
+
+                // Only process if still PENDING SEPAY payment (not expired, not already done)
+                if (payment == null
+                    || payment.PaymentMethod != "SEPAY"
+                    || payment.Status != "PENDING"
+                    || (payment.ExpiredAt.HasValue && payment.ExpiredAt.Value < DateTime.Now))
+                {
+                    _logger.LogDebug("SePay Polling: No valid pending payment found for order code {OrderCode}", orderCode);
+                    return false;
+                }
             }
 
-            // Verify amount
-            if (tx.AmountIn < payment.Amount)
+            // Verify amount (allow 1₫ rounding tolerance to match webhook behavior)
+            if (tx.AmountIn > 0 && Math.Abs(tx.AmountIn - payment.Amount) > 1)
             {
                 _logger.LogWarning(
                     "SePay Polling: Amount mismatch for {OrderCode}. Expected={Expected}, Received={Received}",

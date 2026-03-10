@@ -154,7 +154,7 @@ namespace MV.ApplicationLayer.Services
                     _context.Vouchers.Update(voucher);
                 }
 
-                decimal shippingFee = 5000;
+                decimal shippingFee = 30000m;
                 decimal total = subtotal + shippingFee - discount;
 
                 // 6. Generate order code
@@ -219,15 +219,26 @@ namespace MV.ApplicationLayer.Services
                 }
 
                 // 11. Create Payment record
+                // COD orders are auto-confirmed immediately; SEPAY awaits webhook
+                var isCod = request.PaymentMethod == "COD";
                 var payment = new Payment
                 {
                     OrderId = order.Id,
                     PaymentMethod = request.PaymentMethod,
                     Amount = total,
-                    Status = "PENDING",
+                    Status = isCod ? "COMPLETED" : "PENDING",
+                    PaidAt = isCod ? DateTime.Now : null,
                     CreatedAt = DateTime.Now
                 };
                 _context.Payments.Add(payment);
+
+                // COD: auto-confirm the order so admin can process it
+                if (isCod)
+                {
+                    order.Status = "CONFIRMED";
+                    order.ConfirmedAt = DateTime.Now;
+                    _context.Orders.Update(order);
+                }
 
                 // 12. Clear cart
                 await _context.CartItems
@@ -255,7 +266,7 @@ namespace MV.ApplicationLayer.Services
                 {
                     OrderId = order.Id,
                     OrderCode = orderCode,
-                    Status = "PENDING",
+                    Status = isCod ? "CONFIRMED" : "PENDING",
                     Subtotal = subtotal,
                     ShippingFee = shippingFee,
                     Discount = discount,
