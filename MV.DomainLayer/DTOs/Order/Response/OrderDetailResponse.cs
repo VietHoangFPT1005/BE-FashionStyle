@@ -15,6 +15,9 @@ namespace MV.DomainLayer.DTOs.Order.Response
         public OrderPaymentInfo? Payment { get; set; }
         public OrderTimeline Timeline { get; set; } = new();
 
+        // Frontend: which buttons/actions to show based on current status
+        public List<string> AllowedActions { get; set; } = new();
+
         // Admin/Staff only fields
         public OrderCustomerInfo? Customer { get; set; }
         public OrderShipperInfo? Shipper { get; set; }

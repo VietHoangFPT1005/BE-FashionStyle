@@ -22,5 +22,8 @@ namespace MV.DomainLayer.DTOs.Payment.Response
         public string? TransactionId { get; set; }
         public DateTime? PaidAt { get; set; }
         public DateTime? CreatedAt { get; set; }
+        public DateTime? ExpiredAt { get; set; }
+        public bool IsPaid { get; set; }
+        public int RemainingSeconds { get; set; }
     }
 }

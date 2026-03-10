@@ -39,21 +39,21 @@ namespace MV.PresentationLayer.Controllers
         }
 
         /// <summary>
-        /// Pickup order - start shipping (PROCESSING → SHIPPING)
+        /// Pickup order - start shipping (PROCESSING → SHIPPING). Requires tracking number.
         /// </summary>
         [HttpPut("orders/{orderId}/pickup")]
-        [SwaggerOperation(Summary = "Pickup order - start shipping")]
+        [SwaggerOperation(Summary = "Pickup order - start shipping (requires tracking number)")]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status403Forbidden)]
-        public async Task<IActionResult> PickupOrder(int orderId)
+        public async Task<IActionResult> PickupOrder(int orderId, [FromBody] PickupOrderRequest request)
         {
             if (!IsShipper())
                 return StatusCode(StatusCodes.Status403Forbidden,
                     ApiResponse.ErrorResponse("Access denied. Shipper role required."));
 
             var shipperId = GetCurrentUserId();
-            var result = await _shipperService.PickupOrderAsync(shipperId, orderId);
+            var result = await _shipperService.PickupOrderAsync(shipperId, orderId, request);
             if (!result.Success)
                 return BadRequest(result);
 

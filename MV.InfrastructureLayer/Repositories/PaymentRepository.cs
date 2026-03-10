@@ -40,5 +40,17 @@ namespace MV.InfrastructureLayer.Repositories
                 .Include(p => p.Order)
                 .FirstOrDefaultAsync(p => p.Order.OrderCode == orderCode);
         }
+
+        public async Task<List<Payment>> GetExpiredPendingSePayPaymentsAsync()
+        {
+            return await _context.Payments
+                .Include(p => p.Order)
+                    .ThenInclude(o => o.OrderItems)
+                .Where(p => p.PaymentMethod == "SEPAY"
+                    && p.Status == "PENDING"
+                    && p.ExpiredAt != null
+                    && p.ExpiredAt < DateTime.Now)
+                .ToListAsync();
+        }
     }
 }

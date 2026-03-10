@@ -67,7 +67,7 @@ namespace MV.ApplicationLayer.Services
         }
 
         // ==================== API 2: Pickup Order (Start Shipping) ====================
-        public async Task<ApiResponse<object>> PickupOrderAsync(int shipperId, int orderId)
+        public async Task<ApiResponse<object>> PickupOrderAsync(int shipperId, int orderId, PickupOrderRequest request)
         {
             var order = await _context.Orders
                 .Include(o => o.Payment)
@@ -80,11 +80,22 @@ namespace MV.ApplicationLayer.Services
                 return ApiResponse<object>.ErrorResponse(
                     "Order is not in PROCESSING status. Cannot start shipping.");
 
+            // TrackingNumber is required (validated by [Required] in DTO, double-check here)
+            if (string.IsNullOrWhiteSpace(request.TrackingNumber))
+                return ApiResponse<object>.ErrorResponse(
+                    "Tracking number is required when starting shipping.");
+
             using var transaction = await _context.Database.BeginTransactionAsync();
             try
             {
                 order.Status = "SHIPPING";
                 order.ShippedAt = DateTime.Now;
+
+                // TODO: Uncomment sau khi chạy SQL script (alter_orders_payments.sql) + re-scaffold entities
+                order.TrackingNumber = request.TrackingNumber.Trim();
+                order.Carrier = request.Carrier?.Trim();
+                order.ExpectedDeliveryDate = request.ExpectedDeliveryDate;
+
                 _context.Orders.Update(order);
 
                 // Notification to customer
@@ -92,8 +103,8 @@ namespace MV.ApplicationLayer.Services
                 {
                     UserId = order.UserId,
                     Type = "SHIPPING",
-                    Title = "Order is being delivered",
-                    Message = $"Your order {order.OrderCode} is being delivered to you.",
+                    Title = "Đơn hàng đang giao",
+                    Message = $"Đơn hàng {order.OrderCode} đang được giao đến bạn. Mã vận đơn: {request.TrackingNumber}",
                     Data = $"{{\"orderId\":{order.Id},\"screen\":\"ORDER_TRACKING\"}}",
                     IsRead = false,
                     CreatedAt = DateTime.Now
@@ -102,7 +113,12 @@ namespace MV.ApplicationLayer.Services
                 await _context.SaveChangesAsync();
                 await transaction.CommitAsync();
 
-                return ApiResponse<object>.SuccessResponse("Order picked up. Delivery started.");
+                return ApiResponse<object>.SuccessResponse(new
+                {
+                    trackingNumber = request.TrackingNumber,
+                    carrier = request.Carrier,
+                    expectedDeliveryDate = request.ExpectedDeliveryDate
+                }, "Order picked up. Delivery started.");
             }
             catch (Exception)
             {
@@ -212,6 +228,18 @@ namespace MV.ApplicationLayer.Services
                                     .ExecuteUpdateAsync(s => s.SetProperty(
                                         p => p.SoldCount, p => Math.Max(0, (p.SoldCount ?? 0) - oi.Quantity)));
                             }
+                        }
+                    }
+
+                    // Restore voucher UsedCount if voucher was used
+                    if (order.VoucherId.HasValue)
+                    {
+                        var voucher = await _context.Vouchers
+                            .FirstOrDefaultAsync(v => v.Id == order.VoucherId.Value);
+                        if (voucher != null)
+                        {
+                            voucher.UsedCount = Math.Max(0, (voucher.UsedCount ?? 0) - 1);
+                            _context.Vouchers.Update(voucher);
                         }
                     }
 

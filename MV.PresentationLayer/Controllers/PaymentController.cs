@@ -11,7 +11,7 @@ using System.Text.Json;
 
 namespace MV.PresentationLayer.Controllers
 {
-    [Route("api/payments")]
+    [Route("api/Payment")]
     [ApiController]
     public class PaymentController : ControllerBase
     {
@@ -52,13 +52,12 @@ namespace MV.PresentationLayer.Controllers
         /// SePay Webhook Callback (called by SePay when payment is completed)
         /// No authentication required - uses webhook verification
         /// </summary>
-        [HttpPost("sepay/callback")]
-        [SwaggerOperation(Summary = "SePay webhook callback (no auth)")]
+        [HttpPost("sepay-webhook")]
+        [SwaggerOperation(Summary = "SePay Webhook - Nhận thông báo giao dịch từ SePay")]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         public async Task<IActionResult> SePayCallback()
         {
-            // Read raw body for checksum verification
             using var reader = new StreamReader(Request.Body);
             var jsonBody = await reader.ReadToEndAsync();
 
@@ -72,9 +71,9 @@ namespace MV.PresentationLayer.Controllers
         /// <summary>
         /// Get payment status for an order
         /// </summary>
-        [HttpGet("orders/{orderId}")]
+        [HttpGet("{orderId}/status")]
         [Authorize]
-        [SwaggerOperation(Summary = "Get payment status")]
+        [SwaggerOperation(Summary = "Lấy trạng thái thanh toán đơn hàng")]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -91,6 +90,33 @@ namespace MV.PresentationLayer.Controllers
             return Ok(result);
         }
 
+        /// <summary>
+        /// Admin/Staff manually verify a SEPAY payment (fallback when webhook fails)
+        /// </summary>
+        [HttpPut("{orderId}/verify")]
+        [Authorize]
+        [SwaggerOperation(Summary = "Admin xác nhận thanh toán thủ công (khi webhook SePay không hoạt động)")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
+        public async Task<IActionResult> VerifyPaymentManually(int orderId)
+        {
+            var userId = GetCurrentUserId();
+            if (userId == 0)
+                return Unauthorized(ApiResponse.ErrorResponse("Invalid token."));
+
+            var role = GetCurrentUserRole();
+            if (role != 1 && role != 2)
+                return StatusCode(403, ApiResponse.ErrorResponse("Only Admin or Staff can verify payments."));
+
+            var result = await _paymentService.VerifyPaymentManuallyAsync(orderId, userId);
+            if (!result.Success)
+                return BadRequest(result);
+
+            return Ok(result);
+        }
+
         // ==================== SEPAY UI CHECKOUT ====================
 
         [HttpGet("{orderId}/poll-status")]
@@ -101,8 +127,26 @@ namespace MV.PresentationLayer.Controllers
             var order = await _orderRepo.GetByIdWithDetailsAsync(orderId);
             if (order == null || order.Payment == null)
                 return NotFound();
-            
-            return Ok(new { status = order.Payment.Status });
+
+            var payment = order.Payment;
+            var status = payment.Status;
+
+            if (status == "PENDING" && payment.PaymentMethod == "SEPAY"
+                && payment.ExpiredAt.HasValue && payment.ExpiredAt.Value < DateTime.Now)
+            {
+                status = "EXPIRED";
+            }
+
+            var remainingSeconds = 0;
+            if (payment.ExpiredAt.HasValue && payment.Status == "PENDING")
+                remainingSeconds = Math.Max(0, (int)(payment.ExpiredAt.Value - DateTime.Now).TotalSeconds);
+
+            return Ok(new
+            {
+                status,
+                isPaid = payment.Status == "COMPLETED",
+                remainingSeconds
+            });
         }
 
         [HttpGet("{orderId}/checkout")]
@@ -124,8 +168,8 @@ namespace MV.PresentationLayer.Controllers
                 return BadRequest("Not a SEPAY payment");
 
             var baseUrl = $"{Request.Scheme}://{Request.Host}";
-            var backendSuccessUrl = $"{baseUrl}/api/payments/callback/success?orderCode={order.OrderCode}";
-            if (!string.IsNullOrEmpty(successUrl)) 
+            var backendSuccessUrl = $"{baseUrl}/api/Payment/callback/success?orderCode={order.OrderCode}";
+            if (!string.IsNullOrEmpty(successUrl))
                 backendSuccessUrl += $"&redirectUrl={Uri.EscapeDataString(successUrl)}";
 
             if (payment.Status == "COMPLETED")
@@ -141,7 +185,7 @@ namespace MV.PresentationLayer.Controllers
             if (string.IsNullOrEmpty(payment.PaymentData))
             {
                 await _paymentService.CreateSePayPaymentAsync(order.UserId, orderId);
-                order = await _orderRepo.GetByIdWithDetailsAsync(orderId); // reload
+                order = await _orderRepo.GetByIdWithDetailsAsync(orderId);
                 payment = order!.Payment;
             }
 
@@ -155,8 +199,10 @@ namespace MV.PresentationLayer.Controllers
                 } catch {}
             }
 
-            var expiredAt = (payment.CreatedAt ?? DateTime.Now).AddMinutes(int.Parse(sepayConfig["PaymentExpiryMinutes"] ?? "10"));
+            var expiredAt = payment.ExpiredAt
+                ?? (payment.CreatedAt ?? DateTime.Now).AddMinutes(int.Parse(sepayConfig["PaymentExpiryMinutes"] ?? "10"));
             var remainingSeconds = Math.Max(0, (int)(expiredAt - DateTime.Now).TotalSeconds);
+
             if (remainingSeconds <= 0 || payment.Status == "EXPIRED" || order.Status == "CANCELLED")
             {
                 return Content($@"
@@ -212,12 +258,15 @@ namespace MV.PresentationLayer.Controllers
             else t.innerText = Math.floor(s/60).toString().padStart(2,'0') + ':' + (s%60).toString().padStart(2,'0');
         }}, 1000);
         setInterval(() => {{
-            fetch('/api/payments/{orderId}/poll-status')
+            fetch('/api/Payment/{orderId}/poll-status')
                 .then(r => r.json())
                 .then(d => {{
-                    if (d.status === 'COMPLETED') {{
+                    if (d.status === 'COMPLETED' || d.isPaid) {{
                         document.getElementById('successOverlay').style.display = 'flex';
                         setTimeout(() => window.location.href = '{backendSuccessUrl}', 2000);
+                    }}
+                    if (d.status === 'EXPIRED') {{
+                        window.location.href = '{finalCancelUrl}';
                     }}
                 }});
         }}, 3000);
@@ -241,6 +290,13 @@ namespace MV.PresentationLayer.Controllers
             var userIdClaim = User.FindFirst("userId")?.Value
                 ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             return int.TryParse(userIdClaim, out var userId) ? userId : 0;
+        }
+
+        private int GetCurrentUserRole()
+        {
+            var roleClaim = User.FindFirst("role")?.Value
+                ?? User.FindFirst(ClaimTypes.Role)?.Value;
+            return int.TryParse(roleClaim, out var role) ? role : 0;
         }
     }
 }

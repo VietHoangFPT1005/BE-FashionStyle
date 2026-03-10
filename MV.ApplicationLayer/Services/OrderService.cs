@@ -261,7 +261,7 @@ namespace MV.ApplicationLayer.Services
                     Discount = discount,
                     Total = total,
                     PaymentMethod = request.PaymentMethod,
-                    PaymentUrl = request.PaymentMethod == "SEPAY" ? $"/api/payments/{order.Id}/checkout" : null,
+                    PaymentUrl = request.PaymentMethod == "SEPAY" ? $"/api/Payment/{order.Id}/checkout" : null,
                     Items = orderItemsList.Select(oi => new OrderItemSummary
                     {
                         ProductName = oi.ProductName,
@@ -342,9 +342,10 @@ namespace MV.ApplicationLayer.Services
             if (order == null)
                 return ApiResponse<object>.ErrorResponse("Order not found.");
 
+            // Customer can only cancel PENDING orders (stricter than admin)
             if (order.Status != "PENDING")
                 return ApiResponse<object>.ErrorResponse(
-                    "Only orders with PENDING status can be cancelled.");
+                    $"Cannot cancel order with status '{order.Status}'. Only PENDING orders can be cancelled by customer.");
 
             using var transaction = await _context.Database.BeginTransactionAsync();
             try
@@ -387,11 +388,13 @@ namespace MV.ApplicationLayer.Services
                     }
                 }
 
-                // Handle payment refund
-                if (order.Payment != null && order.Payment.PaymentMethod == "SEPAY"
-                    && order.Payment.Status == "COMPLETED")
+                // Handle payment status on cancel
+                if (order.Payment != null && order.Payment.PaymentMethod == "SEPAY")
                 {
-                    order.Payment.Status = "REFUND_PENDING";
+                    if (order.Payment.Status == "COMPLETED")
+                        order.Payment.Status = "REFUND_PENDING";
+                    else if (order.Payment.Status == "PENDING")
+                        order.Payment.Status = "FAILED";
                 }
 
                 _context.Orders.Update(order);
@@ -489,9 +492,9 @@ namespace MV.ApplicationLayer.Services
             if (order == null)
                 return ApiResponse<object>.ErrorResponse("Order not found.");
 
-            if (order.Status != "PENDING")
+            if (!ValidateStatusTransition(order.Status ?? "PENDING", "CONFIRMED"))
                 return ApiResponse<object>.ErrorResponse(
-                    "Only orders with PENDING status can be confirmed.");
+                    $"Cannot confirm order with status '{order.Status}'. Only PENDING orders can be confirmed.");
 
             order.Status = "CONFIRMED";
             order.ConfirmedAt = DateTime.Now;
@@ -518,9 +521,9 @@ namespace MV.ApplicationLayer.Services
             if (order == null)
                 return ApiResponse<object>.ErrorResponse("Order not found.");
 
-            if (order.Status != "CONFIRMED")
+            if (!ValidateStatusTransition(order.Status ?? "PENDING", "PROCESSING"))
                 return ApiResponse<object>.ErrorResponse(
-                    "Only orders with CONFIRMED status can be assigned to a shipper.");
+                    $"Cannot assign shipper for order with status '{order.Status}'. Only CONFIRMED orders can be assigned.");
 
             // Validate shipper: must be User with Role = 4 and IsActive
             var shipper = await _userRepository.GetByIdAsync(request.ShipperId);
@@ -569,13 +572,9 @@ namespace MV.ApplicationLayer.Services
             if (order == null)
                 return ApiResponse<object>.ErrorResponse("Order not found.");
 
-            if (order.Status == "DELIVERED")
+            if (!ValidateStatusTransition(order.Status ?? "PENDING", "CANCELLED"))
                 return ApiResponse<object>.ErrorResponse(
-                    "Cannot cancel a delivered order.");
-
-            if (order.Status == "CANCELLED")
-                return ApiResponse<object>.ErrorResponse(
-                    "This order is already cancelled.");
+                    $"Cannot cancel order with status '{order.Status}'. Only PENDING/CONFIRMED/PROCESSING/SHIPPING orders can be cancelled.");
 
             using var transaction = await _context.Database.BeginTransactionAsync();
             try
@@ -617,11 +616,13 @@ namespace MV.ApplicationLayer.Services
                     }
                 }
 
-                // Handle refund if SePay completed
-                if (order.Payment != null && order.Payment.PaymentMethod == "SEPAY"
-                    && order.Payment.Status == "COMPLETED")
+                // Handle payment status on admin cancel
+                if (order.Payment != null && order.Payment.PaymentMethod == "SEPAY")
                 {
-                    order.Payment.Status = "REFUND_PENDING";
+                    if (order.Payment.Status == "COMPLETED")
+                        order.Payment.Status = "REFUND_PENDING";
+                    else if (order.Payment.Status == "PENDING")
+                        order.Payment.Status = "FAILED";
                 }
 
                 _context.Orders.Update(order);
@@ -656,6 +657,60 @@ namespace MV.ApplicationLayer.Services
         #endregion
 
         #region Helpers
+
+        /// <summary>
+        /// Validate if a status transition is allowed using switch expression pattern.
+        /// BE-FashionStyle order flow: PENDING → CONFIRMED → PROCESSING → SHIPPING → DELIVERED
+        ///                                                                          ↘ CANCELLED (from PENDING, CONFIRMED, PROCESSING, SHIPPING)
+        /// </summary>
+        private static bool ValidateStatusTransition(string currentStatus, string newStatus)
+        {
+            return (currentStatus, newStatus) switch
+            {
+                ("PENDING", "CONFIRMED") => true,
+                ("PENDING", "CANCELLED") => true,
+                ("CONFIRMED", "PROCESSING") => true,
+                ("CONFIRMED", "CANCELLED") => true,
+                ("PROCESSING", "SHIPPING") => true,
+                ("PROCESSING", "CANCELLED") => true,
+                ("SHIPPING", "DELIVERED") => true,
+                ("SHIPPING", "CANCELLED") => true,  // admin/delivery-failed auto cancel
+                _ => false
+            };
+        }
+
+        /// <summary>
+        /// Get allowed next actions for frontend to display correct buttons.
+        /// Returns list of action strings based on current order status.
+        /// </summary>
+        private static List<string> GetAllowedActions(string status, bool isAdmin)
+        {
+            if (isAdmin)
+            {
+                return status switch
+                {
+                    "PENDING" => new List<string> { "CONFIRM", "CANCEL" },
+                    "CONFIRMED" => new List<string> { "ASSIGN_SHIPPER", "CANCEL" },
+                    "PROCESSING" => new List<string> { "CANCEL" },
+                    "SHIPPING" => new List<string> { "CANCEL" },
+                    "DELIVERED" => new List<string>(),
+                    "CANCELLED" => new List<string>(),
+                    _ => new List<string>()
+                };
+            }
+
+            // Customer
+            return status switch
+            {
+                "PENDING" => new List<string> { "CANCEL", "PAY" },
+                "CONFIRMED" => new List<string>(),
+                "PROCESSING" => new List<string>(),
+                "SHIPPING" => new List<string> { "TRACK" },
+                "DELIVERED" => new List<string> { "REVIEW", "REFUND" },
+                "CANCELLED" => new List<string> { "REORDER" },
+                _ => new List<string>()
+            };
+        }
 
         private string BuildFullAddress(UserAddress address)
         {
@@ -713,7 +768,8 @@ namespace MV.ApplicationLayer.Services
                     ShippedAt = order.ShippedAt,
                     DeliveredAt = order.DeliveredAt,
                     CancelledAt = order.CancelledAt
-                }
+                },
+                AllowedActions = GetAllowedActions(order.Status ?? "PENDING", isAdmin)
             };
 
             if (isAdmin)

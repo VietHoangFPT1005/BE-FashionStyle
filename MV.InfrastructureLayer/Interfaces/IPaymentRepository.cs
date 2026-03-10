@@ -8,5 +8,6 @@ namespace MV.InfrastructureLayer.Interfaces
         Task UpdateAsync(Payment payment);
         Task<Payment?> GetByOrderIdAsync(int orderId);
         Task<Payment?> GetByOrderCodeAsync(string orderCode);
+        Task<List<Payment>> GetExpiredPendingSePayPaymentsAsync();
     }
 }

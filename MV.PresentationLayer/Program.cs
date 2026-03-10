@@ -148,11 +148,15 @@ namespace MV.PresentationLayer
             builder.Services.AddScoped<IOrderItemRepository, OrderItemRepository>();
             builder.Services.AddScoped<IPaymentRepository, PaymentRepository>();
             builder.Services.AddScoped<INotificationRepository, NotificationRepository>();
+            builder.Services.AddScoped<ISepayTransactionRepository, SepayTransactionRepository>();
 
             // Services - Milestone 3
             builder.Services.AddScoped<IOrderService, OrderService>();
             builder.Services.AddScoped<IPaymentService, PaymentService>();
             builder.Services.AddScoped<IReviewService, ReviewService>();
+
+            // Background Services - Payment expiry auto-cancel
+            builder.Services.AddHostedService<PaymentExpiryBackgroundService>();
 
             // Repositories - Milestone 4
             builder.Services.AddScoped<IShipperLocationRepository, ShipperLocationRepository>();
@@ -170,6 +174,12 @@ namespace MV.PresentationLayer
 
             // HttpClient for external API calls
             builder.Services.AddHttpClient();
+
+            // Prevent background service exceptions from crashing the host
+            builder.Services.Configure<HostOptions>(options =>
+            {
+                options.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.Ignore;
+            });
 
             builder.Services.AddEndpointsApiExplorer();
 

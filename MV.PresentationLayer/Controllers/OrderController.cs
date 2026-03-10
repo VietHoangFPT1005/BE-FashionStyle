@@ -8,7 +8,7 @@ using System.Security.Claims;
 
 namespace MV.PresentationLayer.Controllers
 {
-    [Route("api/orders")]
+    [Route("api/Order")]
     [ApiController]
     [Authorize]
     public class OrderController : ControllerBase
@@ -25,7 +25,7 @@ namespace MV.PresentationLayer.Controllers
         /// <summary>
         /// Checkout - Create order from cart
         /// </summary>
-        [HttpPost]
+        [HttpPost("checkout")]
         [SwaggerOperation(Summary = "Checkout - Create order from cart")]
         [ProducesResponseType(StatusCodes.Status201Created)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -46,7 +46,7 @@ namespace MV.PresentationLayer.Controllers
         /// <summary>
         /// Get my orders (customer)
         /// </summary>
-        [HttpGet]
+        [HttpGet("my-orders")]
         [SwaggerOperation(Summary = "Get my orders")]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -66,18 +66,18 @@ namespace MV.PresentationLayer.Controllers
         /// <summary>
         /// Get order detail (customer)
         /// </summary>
-        [HttpGet("{orderId}")]
+        [HttpGet("{id}")]
         [SwaggerOperation(Summary = "Get order detail")]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-        public async Task<IActionResult> GetOrderDetail(int orderId)
+        public async Task<IActionResult> GetOrderDetail(int id)
         {
             var userId = GetCurrentUserId();
             if (userId == 0)
                 return Unauthorized(ApiResponse.ErrorResponse("Invalid token."));
 
-            var result = await _orderService.GetOrderDetailAsync(orderId, userId);
+            var result = await _orderService.GetOrderDetailAsync(id, userId);
             if (!result.Success)
                 return NotFound(result);
 
@@ -87,19 +87,19 @@ namespace MV.PresentationLayer.Controllers
         /// <summary>
         /// Cancel order (customer - only PENDING orders)
         /// </summary>
-        [HttpPut("{orderId}/cancel")]
+        [HttpPut("{id}/cancel")]
         [SwaggerOperation(Summary = "Cancel order (customer)")]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-        public async Task<IActionResult> CancelOrder(int orderId, [FromBody] CancelOrderRequest request)
+        public async Task<IActionResult> CancelOrder(int id, [FromBody] CancelOrderRequest request)
         {
             var userId = GetCurrentUserId();
             if (userId == 0)
                 return Unauthorized(ApiResponse.ErrorResponse("Invalid token."));
 
-            var result = await _orderService.CancelOrderAsync(orderId, userId, request);
+            var result = await _orderService.CancelOrderAsync(id, userId, request);
             if (!result.Success)
             {
                 if (result.Message != null && result.Message.Contains("not found"))
