@@ -22,6 +22,8 @@ public partial class FashionDbContext : DbContext
 
     public virtual DbSet<ChatAiHistory> ChatAiHistories { get; set; }
 
+    public virtual DbSet<ChatSupportMessage> ChatSupportMessages { get; set; }
+
     public virtual DbSet<Notification> Notifications { get; set; }
 
     public virtual DbSet<Order> Orders { get; set; }
@@ -125,6 +127,30 @@ public partial class FashionDbContext : DbContext
             entity.HasOne(d => d.User).WithMany(p => p.ChatAiHistories)
                 .HasForeignKey(d => d.UserId)
                 .HasConstraintName("ChatAiHistory_UserId_fkey");
+        });
+
+        modelBuilder.Entity<ChatSupportMessage>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("ChatSupportMessages_pkey");
+
+            entity.HasIndex(e => e.CreatedAt, "Idx_ChatSupportMessages_CreatedAt");
+
+            entity.HasIndex(e => e.CustomerId, "Idx_ChatSupportMessages_Customer");
+
+            entity.HasIndex(e => new { e.CustomerId, e.IsRead }, "Idx_ChatSupportMessages_IsRead");
+
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("CURRENT_TIMESTAMP")
+                .HasColumnType("timestamp without time zone");
+            entity.Property(e => e.IsRead).HasDefaultValue(false);
+
+            entity.HasOne(d => d.Customer).WithMany(p => p.ChatSupportMessageCustomers)
+                .HasForeignKey(d => d.CustomerId)
+                .HasConstraintName("FK_ChatSupportMessages_Customer");
+
+            entity.HasOne(d => d.Sender).WithMany(p => p.ChatSupportMessageSenders)
+                .HasForeignKey(d => d.SenderId)
+                .HasConstraintName("FK_ChatSupportMessages_Sender");
         });
 
         modelBuilder.Entity<Notification>(entity =>
