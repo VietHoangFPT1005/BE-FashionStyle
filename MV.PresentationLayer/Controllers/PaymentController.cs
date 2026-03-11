@@ -60,7 +60,7 @@ namespace MV.PresentationLayer.Controllers
         public async Task<IActionResult> SePayCallback()
         {
             // Verify SePay API key from Authorization header
-            var webhookApiKey = _configuration["SePay:WebhookApiKey"];
+            var webhookApiKey = _configuration["SePay:WebhookSecret"];
             if (!string.IsNullOrEmpty(webhookApiKey))
             {
                 var authHeader = Request.Headers["Authorization"].FirstOrDefault();
