@@ -59,7 +59,6 @@ public class ChatHub : Hub
     // ── Methods gọi từ Client ─────────────────────────────────────
 
     /// <summary>
-    /// [CHAT SUPPORT - MỚI THÊM]
     /// Customer gọi method này để gửi tin nhắn đến Staff/Admin
     /// </summary>
     public async Task SendMessageToSupport(string message)
@@ -85,7 +84,6 @@ public class ChatHub : Hub
     }
 
     /// <summary>
-    /// [CHAT SUPPORT - MỚI THÊM]
     /// Staff/Admin gọi method này để trả lời khách hàng
     /// </summary>
     public async Task SendMessageToCustomer(int customerId, string message)

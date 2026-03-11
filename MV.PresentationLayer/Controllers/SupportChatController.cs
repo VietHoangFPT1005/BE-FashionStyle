@@ -36,7 +36,6 @@ public class SupportChatController : ControllerBase
     // ── Customer: lấy lịch sử chat của chính mình ─────────────
 
     /// <summary>
-    /// [CHAT SUPPORT - MỚI THÊM]
     /// Customer gọi để load lịch sử chat trước khi kết nối SignalR
     /// GET /api/SupportChat/history?skip=0&take=50
     /// </summary>
@@ -52,7 +51,6 @@ public class SupportChatController : ControllerBase
     // ── Staff/Admin: quản lý hội thoại ────────────────────────
 
     /// <summary>
-    /// [CHAT SUPPORT - MỚI THÊM]
     /// Staff/Admin lấy danh sách tất cả cuộc hội thoại với customers
     /// GET /api/SupportChat/conversations
     /// </summary>
@@ -65,7 +63,6 @@ public class SupportChatController : ControllerBase
     }
 
     /// <summary>
-    /// [CHAT SUPPORT - MỚI THÊM]
     /// Staff/Admin lấy lịch sử chat của customer cụ thể
     /// GET /api/SupportChat/history/{customerId}?skip=0&take=50
     /// </summary>
@@ -78,7 +75,6 @@ public class SupportChatController : ControllerBase
     }
 
     /// <summary>
-    /// [CHAT SUPPORT - MỚI THÊM]
     /// Staff/Admin đánh dấu đã đọc tin nhắn của customer
     /// PUT /api/SupportChat/read/{customerId}
     /// </summary>
@@ -87,7 +83,7 @@ public class SupportChatController : ControllerBase
     public async Task<IActionResult> MarkAsRead(int customerId)
     {
         await _chatService.MarkAsReadAsync(customerId);
-        return Ok(ApiResponse.SuccessResponse("Đã đánh dấu đã đọc"));  // dùng overload (string) của ApiResponse
+        return Ok(ApiResponse.SuccessResponse("Đã đánh dấu đã đọc"));
     }
 
     // ── Helper ────────────────────────────────────────────────

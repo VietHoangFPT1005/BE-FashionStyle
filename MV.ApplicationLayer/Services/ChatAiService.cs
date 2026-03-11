@@ -87,7 +87,8 @@ namespace MV.ApplicationLayer.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error calling Gemini API");
-                aiResponse = "Đã xảy ra lỗi hệ thống AI khi xử lý. Vui lòng thử lại sau.";
+                // Hiển thị lỗi chi tiết để debug - sau khi fix thì đổi lại thành thông báo thân thiện
+                aiResponse = $"[Lỗi Gemini API] {ex.Message}";
             }
 
             // 8. Extract suggested product IDs from AI response
