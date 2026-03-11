@@ -9,6 +9,7 @@ using MV.DomainLayer.Configuration;
 using MV.InfrastructureLayer.DBContext;
 using MV.InfrastructureLayer.Interfaces;
 using MV.InfrastructureLayer.Repositories;
+using MV.PresentationLayer.Hubs; // [CHAT SUPPORT - MỚI THÊM]
 using System.Text;
 
 namespace MV.PresentationLayer
@@ -87,6 +88,24 @@ namespace MV.PresentationLayer
                         IssuerSigningKey = new SymmetricSecurityKey(
                             Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]!)
                         )
+                    };
+
+                    // [CHAT SUPPORT - MỚI THÊM]
+                    // SignalR trên mobile gửi JWT qua query string thay vì header
+                    options.Events = new JwtBearerEvents
+                    {
+                        OnMessageReceived = context =>
+                        {
+                            var accessToken = context.Request.Query["access_token"];
+                            var path = context.HttpContext.Request.Path;
+                            // Chỉ áp dụng cho hub endpoint
+                            if (!string.IsNullOrEmpty(accessToken) &&
+                                path.StartsWithSegments("/hubs/chat"))
+                            {
+                                context.Token = accessToken;
+                            }
+                            return Task.CompletedTask;
+                        }
                     };
                 });
 
@@ -180,6 +199,13 @@ namespace MV.PresentationLayer
             builder.Services.AddScoped<IAdminProductService, AdminProductService>();
             builder.Services.AddScoped<IRefundService, RefundService>();
 
+            // [CHAT SUPPORT - MỚI THÊM] Repository + Service cho chat hỗ trợ
+            builder.Services.AddScoped<IChatSupportRepository, ChatSupportRepository>();
+            builder.Services.AddScoped<IChatSupportService, ChatSupportService>();
+
+            // [CHAT SUPPORT - MỚI THÊM] Đăng ký SignalR
+            builder.Services.AddSignalR();
+
             // HttpClient for external API calls
             builder.Services.AddHttpClient();
 
@@ -213,6 +239,9 @@ namespace MV.PresentationLayer
             app.UseAuthorization();
 
             app.MapControllers();
+
+            // [CHAT SUPPORT - MỚI THÊM] Map SignalR Hub tại /hubs/chat
+            app.MapHub<ChatHub>("/hubs/chat");
 
             app.Run();
         }
