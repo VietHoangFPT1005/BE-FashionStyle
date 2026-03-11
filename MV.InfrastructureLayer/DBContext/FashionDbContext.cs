@@ -1,8 +1,7 @@
-﻿using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
-using MV.DomainLayer.Entities;
-using System;
+﻿using System;
 using System.Collections.Generic;
+using MV.DomainLayer.Entities;
+using Microsoft.EntityFrameworkCore;
 
 namespace MV.InfrastructureLayer.DBContext;
 
@@ -22,6 +21,8 @@ public partial class FashionDbContext : DbContext
     public virtual DbSet<Category> Categories { get; set; }
 
     public virtual DbSet<ChatAiHistory> ChatAiHistories { get; set; }
+
+    public virtual DbSet<ChatSupportMessage> ChatSupportMessages { get; set; }
 
     public virtual DbSet<Notification> Notifications { get; set; }
 
@@ -43,6 +44,10 @@ public partial class FashionDbContext : DbContext
 
     public virtual DbSet<RefreshToken> RefreshTokens { get; set; }
 
+    public virtual DbSet<Refund> Refunds { get; set; }
+
+    public virtual DbSet<SepayTransaction> SepayTransactions { get; set; }
+
     public virtual DbSet<ShipperLocation> ShipperLocations { get; set; }
 
     public virtual DbSet<SizeGuide> SizeGuides { get; set; }
@@ -57,19 +62,9 @@ public partial class FashionDbContext : DbContext
 
     public virtual DbSet<Wishlist> Wishlists { get; set; }
 
-    private string GetConnectionString()
-    {
-        IConfiguration config = new ConfigurationBuilder()
-             .SetBasePath(Directory.GetCurrentDirectory())
-                    .AddJsonFile("appsettings.json", true, true)
-                    .Build();
-        var strConn = config["ConnectionStrings:DefaultConnection"];
-
-        return strConn!;
-    }
-
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
-        => optionsBuilder.UseNpgsql(GetConnectionString());
+#warning To protect potentially sensitive information in your connection string, you should move it out of source code. You can avoid scaffolding the connection string by using the Name= syntax to read it from configuration - see https://go.microsoft.com/fwlink/?linkid=2131148. For more guidance on storing connection strings, see https://go.microsoft.com/fwlink/?LinkId=723263.
+        => optionsBuilder.UseNpgsql("Host=localhost;Port=5432;Database=FASHION-DB;Username=postgres;Password=12345");
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -134,6 +129,30 @@ public partial class FashionDbContext : DbContext
                 .HasConstraintName("ChatAiHistory_UserId_fkey");
         });
 
+        modelBuilder.Entity<ChatSupportMessage>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("ChatSupportMessages_pkey");
+
+            entity.HasIndex(e => e.CreatedAt, "Idx_ChatSupportMessages_CreatedAt");
+
+            entity.HasIndex(e => e.CustomerId, "Idx_ChatSupportMessages_Customer");
+
+            entity.HasIndex(e => new { e.CustomerId, e.IsRead }, "Idx_ChatSupportMessages_IsRead");
+
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("CURRENT_TIMESTAMP")
+                .HasColumnType("timestamp without time zone");
+            entity.Property(e => e.IsRead).HasDefaultValue(false);
+
+            entity.HasOne(d => d.Customer).WithMany(p => p.ChatSupportMessageCustomers)
+                .HasForeignKey(d => d.CustomerId)
+                .HasConstraintName("FK_ChatSupportMessages_Customer");
+
+            entity.HasOne(d => d.Sender).WithMany(p => p.ChatSupportMessageSenders)
+                .HasForeignKey(d => d.SenderId)
+                .HasConstraintName("FK_ChatSupportMessages_Sender");
+        });
+
         modelBuilder.Entity<Notification>(entity =>
         {
             entity.HasKey(e => e.Id).HasName("Notifications_pkey");
@@ -169,6 +188,7 @@ public partial class FashionDbContext : DbContext
 
             entity.Property(e => e.CancelReason).HasMaxLength(500);
             entity.Property(e => e.CancelledAt).HasColumnType("timestamp without time zone");
+            entity.Property(e => e.Carrier).HasMaxLength(100);
             entity.Property(e => e.ConfirmedAt).HasColumnType("timestamp without time zone");
             entity.Property(e => e.CreatedAt)
                 .HasDefaultValueSql("CURRENT_TIMESTAMP")
@@ -178,6 +198,7 @@ public partial class FashionDbContext : DbContext
             entity.Property(e => e.Discount)
                 .HasPrecision(15, 2)
                 .HasDefaultValueSql("0");
+            entity.Property(e => e.ExpectedDeliveryDate).HasColumnType("timestamp without time zone");
             entity.Property(e => e.OrderCode).HasMaxLength(50);
             entity.Property(e => e.ShippedAt).HasColumnType("timestamp without time zone");
             entity.Property(e => e.ShippingCity).HasMaxLength(100);
@@ -195,6 +216,23 @@ public partial class FashionDbContext : DbContext
                 .HasDefaultValueSql("'PENDING'::character varying");
             entity.Property(e => e.Subtotal).HasPrecision(15, 2);
             entity.Property(e => e.Total).HasPrecision(15, 2);
+            entity.Property(e => e.TrackingNumber).HasMaxLength(100);
+            entity.Property(e => e.UpdatedAt).HasColumnType("timestamp without time zone");
+
+            entity.HasOne(d => d.CancelledByNavigation).WithMany(p => p.OrderCancelledByNavigations)
+                .HasForeignKey(d => d.CancelledBy)
+                .OnDelete(DeleteBehavior.SetNull)
+                .HasConstraintName("Orders_CancelledBy_fkey");
+
+            entity.HasOne(d => d.ConfirmedByNavigation).WithMany(p => p.OrderConfirmedByNavigations)
+                .HasForeignKey(d => d.ConfirmedBy)
+                .OnDelete(DeleteBehavior.SetNull)
+                .HasConstraintName("Orders_ConfirmedBy_fkey");
+
+            entity.HasOne(d => d.ShippedByNavigation).WithMany(p => p.OrderShippedByNavigations)
+                .HasForeignKey(d => d.ShippedBy)
+                .OnDelete(DeleteBehavior.SetNull)
+                .HasConstraintName("Orders_ShippedBy_fkey");
 
             entity.HasOne(d => d.Shipper).WithMany(p => p.OrderShippers)
                 .HasForeignKey(d => d.ShipperId)
@@ -266,20 +304,31 @@ public partial class FashionDbContext : DbContext
             entity.HasIndex(e => e.OrderId, "Payments_OrderId_key").IsUnique();
 
             entity.Property(e => e.Amount).HasPrecision(15, 2);
+            entity.Property(e => e.BankCode).HasMaxLength(50);
             entity.Property(e => e.CreatedAt)
                 .HasDefaultValueSql("CURRENT_TIMESTAMP")
                 .HasColumnType("timestamp without time zone");
+            entity.Property(e => e.ExpiredAt).HasColumnType("timestamp without time zone");
             entity.Property(e => e.PaidAt).HasColumnType("timestamp without time zone");
             entity.Property(e => e.PaymentData).HasColumnType("jsonb");
             entity.Property(e => e.PaymentMethod).HasMaxLength(50);
+            entity.Property(e => e.PaymentReference).HasMaxLength(255);
+            entity.Property(e => e.QrCodeUrl).HasMaxLength(500);
+            entity.Property(e => e.ReceivedAmount).HasPrecision(15, 2);
             entity.Property(e => e.Status)
                 .HasMaxLength(50)
                 .HasDefaultValueSql("'PENDING'::character varying");
             entity.Property(e => e.TransactionId).HasMaxLength(100);
+            entity.Property(e => e.VerifiedAt).HasColumnType("timestamp without time zone");
 
             entity.HasOne(d => d.Order).WithOne(p => p.Payment)
                 .HasForeignKey<Payment>(d => d.OrderId)
                 .HasConstraintName("Payments_OrderId_fkey");
+
+            entity.HasOne(d => d.VerifiedByNavigation).WithMany(p => p.Payments)
+                .HasForeignKey(d => d.VerifiedBy)
+                .OnDelete(DeleteBehavior.SetNull)
+                .HasConstraintName("Payments_VerifiedBy_fkey");
         });
 
         modelBuilder.Entity<Product>(entity =>
@@ -417,6 +466,74 @@ public partial class FashionDbContext : DbContext
             entity.HasOne(d => d.User).WithMany(p => p.RefreshTokens)
                 .HasForeignKey(d => d.UserId)
                 .HasConstraintName("RefreshTokens_UserId_fkey");
+        });
+
+        modelBuilder.Entity<Refund>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("Refunds_pkey");
+
+            entity.HasIndex(e => e.CreatedAt, "Idx_Refunds_Created").IsDescending();
+
+            entity.HasIndex(e => e.Status, "Idx_Refunds_Status");
+
+            entity.HasIndex(e => e.UserId, "Idx_Refunds_User");
+
+            entity.HasIndex(e => e.OrderId, "Refunds_OrderId_key").IsUnique();
+
+            entity.Property(e => e.AdminNote).HasMaxLength(500);
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("CURRENT_TIMESTAMP")
+                .HasColumnType("timestamp without time zone");
+            entity.Property(e => e.ProcessedAt).HasColumnType("timestamp without time zone");
+            entity.Property(e => e.Status)
+                .HasMaxLength(20)
+                .HasDefaultValueSql("'PENDING'::character varying");
+
+            entity.HasOne(d => d.Order).WithOne(p => p.Refund)
+                .HasForeignKey<Refund>(d => d.OrderId)
+                .HasConstraintName("Refunds_OrderId_fkey");
+
+            entity.HasOne(d => d.ProcessedByNavigation).WithMany(p => p.RefundProcessedByNavigations)
+                .HasForeignKey(d => d.ProcessedBy)
+                .OnDelete(DeleteBehavior.SetNull)
+                .HasConstraintName("Refunds_ProcessedBy_fkey");
+
+            entity.HasOne(d => d.User).WithMany(p => p.RefundUsers)
+                .HasForeignKey(d => d.UserId)
+                .HasConstraintName("Refunds_UserId_fkey");
+        });
+
+        modelBuilder.Entity<SepayTransaction>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("SepayTransactions_pkey");
+
+            entity.HasIndex(e => e.OrderId, "Idx_SepayTransactions_Order");
+
+            entity.HasIndex(e => e.IsProcessed, "Idx_SepayTransactions_Processed");
+
+            entity.HasIndex(e => e.SepayId, "SepayTransactions_SepayId_key")
+                .IsUnique()
+                .HasFilter("(\"SepayId\" IS NOT NULL)");
+
+            entity.Property(e => e.AccountNumber).HasMaxLength(50);
+            entity.Property(e => e.Accumulated).HasPrecision(15, 2);
+            entity.Property(e => e.Code).HasMaxLength(50);
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("CURRENT_TIMESTAMP")
+                .HasColumnType("timestamp without time zone");
+            entity.Property(e => e.Gateway).HasMaxLength(50);
+            entity.Property(e => e.IsProcessed).HasDefaultValue(false);
+            entity.Property(e => e.ProcessedAt).HasColumnType("timestamp without time zone");
+            entity.Property(e => e.ReferenceNumber).HasMaxLength(100);
+            entity.Property(e => e.SepayId).HasMaxLength(100);
+            entity.Property(e => e.TransactionDate).HasColumnType("timestamp without time zone");
+            entity.Property(e => e.TransferAmount).HasPrecision(15, 2);
+            entity.Property(e => e.TransferType).HasMaxLength(10);
+
+            entity.HasOne(d => d.Order).WithMany(p => p.SepayTransactions)
+                .HasForeignKey(d => d.OrderId)
+                .OnDelete(DeleteBehavior.SetNull)
+                .HasConstraintName("SepayTransactions_OrderId_fkey");
         });
 
         modelBuilder.Entity<ShipperLocation>(entity =>

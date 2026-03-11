@@ -23,5 +23,21 @@ public partial class Payment
 
     public DateTime? CreatedAt { get; set; }
 
+    public DateTime? ExpiredAt { get; set; }
+
+    public decimal? ReceivedAmount { get; set; }
+
+    public string? BankCode { get; set; }
+
+    public string? PaymentReference { get; set; }
+
+    public string? QrCodeUrl { get; set; }
+
+    public int? VerifiedBy { get; set; }
+
+    public DateTime? VerifiedAt { get; set; }
+
     public virtual Order Order { get; set; } = null!;
+
+    public virtual User? VerifiedByNavigation { get; set; }
 }
