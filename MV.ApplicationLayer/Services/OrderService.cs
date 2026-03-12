@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using MV.ApplicationLayer.ServiceInterfaces;
 using MV.DomainLayer.DTOs.Common;
 using MV.DomainLayer.DTOs.Order.Request;
@@ -18,6 +19,7 @@ namespace MV.ApplicationLayer.Services
         private readonly IVoucherRepository _voucherRepository;
         private readonly IUserRepository _userRepository;
         private readonly INotificationRepository _notificationRepository;
+        private readonly ILogger<OrderService> _logger;
 
         public OrderService(
             FashionDbContext context,
@@ -26,7 +28,8 @@ namespace MV.ApplicationLayer.Services
             IUserAddressRepository addressRepository,
             IVoucherRepository voucherRepository,
             IUserRepository userRepository,
-            INotificationRepository notificationRepository)
+            INotificationRepository notificationRepository,
+            ILogger<OrderService> logger)
         {
             _context = context;
             _orderRepository = orderRepository;
@@ -35,6 +38,7 @@ namespace MV.ApplicationLayer.Services
             _voucherRepository = voucherRepository;
             _userRepository = userRepository;
             _notificationRepository = notificationRepository;
+            _logger = logger;
         }
 
         #region Customer APIs
@@ -150,7 +154,7 @@ namespace MV.ApplicationLayer.Services
                     _context.Vouchers.Update(voucher);
                 }
 
-                decimal shippingFee = 30000;
+                decimal shippingFee = 30000m;
                 decimal total = subtotal + shippingFee - discount;
 
                 // 6. Generate order code
@@ -197,10 +201,16 @@ namespace MV.ApplicationLayer.Services
                 // 10. Deduct stock + increase sold count
                 foreach (var ci in cartItems)
                 {
-                    await _context.ProductVariants
-                        .Where(v => v.Id == ci.ProductVariantId)
+                    var rowsUpdated = await _context.ProductVariants
+                        .Where(v => v.Id == ci.ProductVariantId && (v.StockQuantity ?? 0) >= ci.Quantity)
                         .ExecuteUpdateAsync(s => s.SetProperty(
                             v => v.StockQuantity, v => (v.StockQuantity ?? 0) - ci.Quantity));
+
+                    if (rowsUpdated == 0)
+                    {
+                        await transaction.RollbackAsync();
+                        return ApiResponse<CreateOrderResponse>.ErrorResponse("Some products ran out of stock while processing your order.");
+                    }
 
                     await _context.Products
                         .Where(p => p.Id == ci.ProductVariant.ProductId)
@@ -209,15 +219,26 @@ namespace MV.ApplicationLayer.Services
                 }
 
                 // 11. Create Payment record
+                // COD orders are auto-confirmed immediately; SEPAY awaits webhook
+                var isCod = request.PaymentMethod == "COD";
                 var payment = new Payment
                 {
                     OrderId = order.Id,
                     PaymentMethod = request.PaymentMethod,
                     Amount = total,
-                    Status = "PENDING",
+                    Status = isCod ? "COMPLETED" : "PENDING",
+                    PaidAt = isCod ? DateTime.Now : null,
                     CreatedAt = DateTime.Now
                 };
                 _context.Payments.Add(payment);
+
+                // COD: auto-confirm the order so admin can process it
+                if (isCod)
+                {
+                    order.Status = "CONFIRMED";
+                    order.ConfirmedAt = DateTime.Now;
+                    _context.Orders.Update(order);
+                }
 
                 // 12. Clear cart
                 await _context.CartItems
@@ -245,12 +266,13 @@ namespace MV.ApplicationLayer.Services
                 {
                     OrderId = order.Id,
                     OrderCode = orderCode,
-                    Status = "PENDING",
+                    Status = isCod ? "CONFIRMED" : "PENDING",
                     Subtotal = subtotal,
                     ShippingFee = shippingFee,
                     Discount = discount,
                     Total = total,
                     PaymentMethod = request.PaymentMethod,
+                    PaymentUrl = request.PaymentMethod == "SEPAY" ? $"/api/Payment/{order.Id}/checkout" : null,
                     Items = orderItemsList.Select(oi => new OrderItemSummary
                     {
                         ProductName = oi.ProductName,
@@ -331,9 +353,10 @@ namespace MV.ApplicationLayer.Services
             if (order == null)
                 return ApiResponse<object>.ErrorResponse("Order not found.");
 
+            // Customer can only cancel PENDING orders (stricter than admin)
             if (order.Status != "PENDING")
                 return ApiResponse<object>.ErrorResponse(
-                    "Only orders with PENDING status can be cancelled.");
+                    $"Cannot cancel order with status '{order.Status}'. Only PENDING orders can be cancelled by customer.");
 
             using var transaction = await _context.Database.BeginTransactionAsync();
             try
@@ -365,11 +388,24 @@ namespace MV.ApplicationLayer.Services
                     }
                 }
 
-                // Handle payment refund
-                if (order.Payment != null && order.Payment.PaymentMethod == "SEPAY"
-                    && order.Payment.Status == "COMPLETED")
+                // Restore voucher if used
+                if (order.VoucherId.HasValue)
                 {
-                    order.Payment.Status = "REFUND_PENDING";
+                    var voucher = await _context.Vouchers.FirstOrDefaultAsync(v => v.Id == order.VoucherId.Value);
+                    if (voucher != null)
+                    {
+                        voucher.UsedCount = Math.Max(0, (voucher.UsedCount ?? 0) - 1);
+                        _context.Vouchers.Update(voucher);
+                    }
+                }
+
+                // Handle payment status on cancel
+                if (order.Payment != null && order.Payment.PaymentMethod == "SEPAY")
+                {
+                    if (order.Payment.Status == "COMPLETED")
+                        order.Payment.Status = "REFUND_PENDING";
+                    else if (order.Payment.Status == "PENDING")
+                        order.Payment.Status = "FAILED";
                 }
 
                 _context.Orders.Update(order);
@@ -467,9 +503,9 @@ namespace MV.ApplicationLayer.Services
             if (order == null)
                 return ApiResponse<object>.ErrorResponse("Order not found.");
 
-            if (order.Status != "PENDING")
+            if (!ValidateStatusTransition(order.Status ?? "PENDING", "CONFIRMED"))
                 return ApiResponse<object>.ErrorResponse(
-                    "Only orders with PENDING status can be confirmed.");
+                    $"Cannot confirm order with status '{order.Status}'. Only PENDING orders can be confirmed.");
 
             order.Status = "CONFIRMED";
             order.ConfirmedAt = DateTime.Now;
@@ -496,9 +532,9 @@ namespace MV.ApplicationLayer.Services
             if (order == null)
                 return ApiResponse<object>.ErrorResponse("Order not found.");
 
-            if (order.Status != "CONFIRMED")
+            if (!ValidateStatusTransition(order.Status ?? "PENDING", "PROCESSING"))
                 return ApiResponse<object>.ErrorResponse(
-                    "Only orders with CONFIRMED status can be assigned to a shipper.");
+                    $"Cannot assign shipper for order with status '{order.Status}'. Only CONFIRMED orders can be assigned.");
 
             // Validate shipper: must be User with Role = 4 and IsActive
             var shipper = await _userRepository.GetByIdAsync(request.ShipperId);
@@ -547,13 +583,9 @@ namespace MV.ApplicationLayer.Services
             if (order == null)
                 return ApiResponse<object>.ErrorResponse("Order not found.");
 
-            if (order.Status == "DELIVERED")
+            if (!ValidateStatusTransition(order.Status ?? "PENDING", "CANCELLED"))
                 return ApiResponse<object>.ErrorResponse(
-                    "Cannot cancel a delivered order.");
-
-            if (order.Status == "CANCELLED")
-                return ApiResponse<object>.ErrorResponse(
-                    "This order is already cancelled.");
+                    $"Cannot cancel order with status '{order.Status}'. Only PENDING/CONFIRMED/PROCESSING/SHIPPING orders can be cancelled.");
 
             using var transaction = await _context.Database.BeginTransactionAsync();
             try
@@ -584,11 +616,24 @@ namespace MV.ApplicationLayer.Services
                     }
                 }
 
-                // Handle refund if SePay completed
-                if (order.Payment != null && order.Payment.PaymentMethod == "SEPAY"
-                    && order.Payment.Status == "COMPLETED")
+                // Restore voucher if used
+                if (order.VoucherId.HasValue)
                 {
-                    order.Payment.Status = "REFUND_PENDING";
+                    var voucher = await _context.Vouchers.FirstOrDefaultAsync(v => v.Id == order.VoucherId.Value);
+                    if (voucher != null)
+                    {
+                        voucher.UsedCount = Math.Max(0, (voucher.UsedCount ?? 0) - 1);
+                        _context.Vouchers.Update(voucher);
+                    }
+                }
+
+                // Handle payment status on admin cancel
+                if (order.Payment != null && order.Payment.PaymentMethod == "SEPAY")
+                {
+                    if (order.Payment.Status == "COMPLETED")
+                        order.Payment.Status = "REFUND_PENDING";
+                    else if (order.Payment.Status == "PENDING")
+                        order.Payment.Status = "FAILED";
                 }
 
                 _context.Orders.Update(order);
@@ -608,6 +653,9 @@ namespace MV.ApplicationLayer.Services
                 await _context.SaveChangesAsync();
                 await transaction.CommitAsync();
 
+                // Admin adminId is not explicitly recorded here, but we can log that an Admin triggered this endpoint using _logger.
+                _logger.LogWarning("AUDIT: Admin cancelled Order {OrderId}. Reason: {Reason} at {Time}", orderId, request.CancelReason, DateTime.UtcNow);
+
                 return ApiResponse<object>.SuccessResponse("Order cancelled successfully.");
             }
             catch (Exception)
@@ -620,6 +668,60 @@ namespace MV.ApplicationLayer.Services
         #endregion
 
         #region Helpers
+
+        /// <summary>
+        /// Validate if a status transition is allowed using switch expression pattern.
+        /// BE-FashionStyle order flow: PENDING → CONFIRMED → PROCESSING → SHIPPING → DELIVERED
+        ///                                                                          ↘ CANCELLED (from PENDING, CONFIRMED, PROCESSING, SHIPPING)
+        /// </summary>
+        private static bool ValidateStatusTransition(string currentStatus, string newStatus)
+        {
+            return (currentStatus, newStatus) switch
+            {
+                ("PENDING", "CONFIRMED") => true,
+                ("PENDING", "CANCELLED") => true,
+                ("CONFIRMED", "PROCESSING") => true,
+                ("CONFIRMED", "CANCELLED") => true,
+                ("PROCESSING", "SHIPPING") => true,
+                ("PROCESSING", "CANCELLED") => true,
+                ("SHIPPING", "DELIVERED") => true,
+                ("SHIPPING", "CANCELLED") => true,  // admin/delivery-failed auto cancel
+                _ => false
+            };
+        }
+
+        /// <summary>
+        /// Get allowed next actions for frontend to display correct buttons.
+        /// Returns list of action strings based on current order status.
+        /// </summary>
+        private static List<string> GetAllowedActions(string status, bool isAdmin)
+        {
+            if (isAdmin)
+            {
+                return status switch
+                {
+                    "PENDING" => new List<string> { "CONFIRM", "CANCEL" },
+                    "CONFIRMED" => new List<string> { "ASSIGN_SHIPPER", "CANCEL" },
+                    "PROCESSING" => new List<string> { "CANCEL" },
+                    "SHIPPING" => new List<string> { "CANCEL" },
+                    "DELIVERED" => new List<string>(),
+                    "CANCELLED" => new List<string>(),
+                    _ => new List<string>()
+                };
+            }
+
+            // Customer
+            return status switch
+            {
+                "PENDING" => new List<string> { "CANCEL", "PAY" },
+                "CONFIRMED" => new List<string>(),
+                "PROCESSING" => new List<string>(),
+                "SHIPPING" => new List<string> { "TRACK" },
+                "DELIVERED" => new List<string> { "REVIEW", "REFUND" },
+                "CANCELLED" => new List<string> { "REORDER" },
+                _ => new List<string>()
+            };
+        }
 
         private string BuildFullAddress(UserAddress address)
         {
@@ -677,7 +779,8 @@ namespace MV.ApplicationLayer.Services
                     ShippedAt = order.ShippedAt,
                     DeliveredAt = order.DeliveredAt,
                     CancelledAt = order.CancelledAt
-                }
+                },
+                AllowedActions = GetAllowedActions(order.Status ?? "PENDING", isAdmin)
             };
 
             if (isAdmin)

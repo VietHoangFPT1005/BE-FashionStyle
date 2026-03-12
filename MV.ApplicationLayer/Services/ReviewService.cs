@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using MV.ApplicationLayer.ServiceInterfaces;
 using MV.DomainLayer.DTOs.Common;
 using MV.DomainLayer.DTOs.Review.Request;
@@ -15,17 +16,20 @@ namespace MV.ApplicationLayer.Services
         private readonly IProductRepository _productRepository;
         private readonly IOrderItemRepository _orderItemRepository;
         private readonly IProductReviewRepository _reviewRepository;
+        private readonly ILogger<ReviewService> _logger;
 
         public ReviewService(
             FashionDbContext context,
             IProductRepository productRepository,
             IOrderItemRepository orderItemRepository,
-            IProductReviewRepository reviewRepository)
+            IProductReviewRepository reviewRepository,
+            ILogger<ReviewService> logger)
         {
             _context = context;
             _productRepository = productRepository;
             _orderItemRepository = orderItemRepository;
             _reviewRepository = reviewRepository;
+            _logger = logger;
         }
 
         public async Task<ApiResponse<CreateReviewResponse>> CreateReviewAsync(
@@ -60,54 +64,65 @@ namespace MV.ApplicationLayer.Services
                 .OrderByDescending(oi => oi.Order.DeliveredAt)
                 .FirstOrDefaultAsync();
 
-            // Create review
-            var review = new ProductReview
+            using var transaction = await _context.Database.BeginTransactionAsync();
+            try
             {
-                ProductId = productId,
-                UserId = userId,
-                OrderId = orderItem?.OrderId,
-                Rating = request.Rating,
-                Comment = request.Comment,
-                ReviewImageUrl = request.ReviewImageUrl,
-                HeightCm = request.HeightCm,
-                WeightKg = request.WeightKg,
-                SizeOrdered = request.SizeOrdered,
-                ShowBodyInfo = request.ShowBodyInfo,
-                CreatedAt = DateTime.Now
-            };
-
-            _context.ProductReviews.Add(review);
-            await _context.SaveChangesAsync();
-
-            // Update Product's AverageRating and TotalReviews
-            var avgRating = await _context.ProductReviews
-                .Where(r => r.ProductId == productId)
-                .AverageAsync(r => (decimal)r.Rating);
-            var totalReviews = await _context.ProductReviews
-                .CountAsync(r => r.ProductId == productId);
-
-            await _context.Products
-                .Where(p => p.Id == productId)
-                .ExecuteUpdateAsync(s => s
-                    .SetProperty(p => p.AverageRating, Math.Round(avgRating, 1))
-                    .SetProperty(p => p.TotalReviews, totalReviews));
-
-            var response = new CreateReviewResponse
-            {
-                ReviewId = review.Id,
-                ProductId = productId,
-                Rating = review.Rating,
-                Comment = review.Comment,
-                BodyInfo = request.ShowBodyInfo ? new ReviewBodyInfoResponse
+                // Create review
+                var review = new ProductReview
                 {
+                    ProductId = productId,
+                    UserId = userId,
+                    OrderId = orderItem?.OrderId,
+                    Rating = request.Rating,
+                    Comment = request.Comment,
+                    ReviewImageUrl = request.ReviewImageUrl,
                     HeightCm = request.HeightCm,
                     WeightKg = request.WeightKg,
-                    SizeOrdered = request.SizeOrdered
-                } : null,
-                CreatedAt = review.CreatedAt
-            };
+                    SizeOrdered = request.SizeOrdered,
+                    ShowBodyInfo = request.ShowBodyInfo,
+                    CreatedAt = DateTime.Now
+                };
 
-            return ApiResponse<CreateReviewResponse>.SuccessResponse(response, "Review submitted successfully.");
+                _context.ProductReviews.Add(review);
+                await _context.SaveChangesAsync();
+
+                // Update Product's AverageRating and TotalReviews
+                var avgRating = await _context.ProductReviews
+                    .Where(r => r.ProductId == productId)
+                    .AverageAsync(r => (decimal)r.Rating);
+                var totalReviews = await _context.ProductReviews
+                    .CountAsync(r => r.ProductId == productId);
+
+                await _context.Products
+                    .Where(p => p.Id == productId)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(p => p.AverageRating, Math.Round(avgRating, 1))
+                        .SetProperty(p => p.TotalReviews, totalReviews));
+
+                await transaction.CommitAsync();
+
+                var response = new CreateReviewResponse
+                {
+                    ReviewId = review.Id,
+                    ProductId = productId,
+                    Rating = review.Rating,
+                    Comment = review.Comment,
+                    BodyInfo = request.ShowBodyInfo ? new ReviewBodyInfoResponse
+                    {
+                        HeightCm = request.HeightCm,
+                        WeightKg = request.WeightKg,
+                        SizeOrdered = request.SizeOrdered
+                    } : null,
+                    CreatedAt = review.CreatedAt
+                };
+
+                return ApiResponse<CreateReviewResponse>.SuccessResponse(response, "Review submitted successfully.");
+            }
+            catch (Exception)
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
         }
 
         // ==================== Update Review ====================
@@ -120,32 +135,43 @@ namespace MV.ApplicationLayer.Services
             if (review == null)
                 return ApiResponse<CreateReviewResponse>.ErrorResponse("Review not found.");
 
-            if (request.Rating.HasValue) review.Rating = request.Rating.Value;
-            if (request.Comment != null) review.Comment = request.Comment;
-            if (request.ReviewImageUrl != null) review.ReviewImageUrl = request.ReviewImageUrl;
-            if (request.ShowBodyInfo.HasValue) review.ShowBodyInfo = request.ShowBodyInfo.Value;
-
-            await _context.SaveChangesAsync();
-
-            // Recalculate product rating
-            await RecalculateProductRatingAsync(productId);
-
-            var response = new CreateReviewResponse
+            using var transaction = await _context.Database.BeginTransactionAsync();
+            try
             {
-                ReviewId = review.Id,
-                ProductId = productId,
-                Rating = review.Rating,
-                Comment = review.Comment,
-                BodyInfo = review.ShowBodyInfo == true ? new ReviewBodyInfoResponse
-                {
-                    HeightCm = review.HeightCm,
-                    WeightKg = review.WeightKg,
-                    SizeOrdered = review.SizeOrdered
-                } : null,
-                CreatedAt = review.CreatedAt
-            };
+                if (request.Rating.HasValue) review.Rating = request.Rating.Value;
+                if (request.Comment != null) review.Comment = request.Comment;
+                if (request.ReviewImageUrl != null) review.ReviewImageUrl = request.ReviewImageUrl;
+                if (request.ShowBodyInfo.HasValue) review.ShowBodyInfo = request.ShowBodyInfo.Value;
 
-            return ApiResponse<CreateReviewResponse>.SuccessResponse(response, "Review updated successfully.");
+                await _context.SaveChangesAsync();
+
+                // Recalculate product rating
+                await RecalculateProductRatingAsync(productId);
+
+                await transaction.CommitAsync();
+
+                var response = new CreateReviewResponse
+                {
+                    ReviewId = review.Id,
+                    ProductId = productId,
+                    Rating = review.Rating,
+                    Comment = review.Comment,
+                    BodyInfo = review.ShowBodyInfo == true ? new ReviewBodyInfoResponse
+                    {
+                        HeightCm = review.HeightCm,
+                        WeightKg = review.WeightKg,
+                        SizeOrdered = review.SizeOrdered
+                    } : null,
+                    CreatedAt = review.CreatedAt
+                };
+
+                return ApiResponse<CreateReviewResponse>.SuccessResponse(response, "Review updated successfully.");
+            }
+            catch (Exception)
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
         }
 
         // ==================== Delete Review (User) ====================
@@ -157,12 +183,22 @@ namespace MV.ApplicationLayer.Services
             if (review == null)
                 return ApiResponse<object>.ErrorResponse("Review not found.");
 
-            _context.ProductReviews.Remove(review);
-            await _context.SaveChangesAsync();
+            using var transaction = await _context.Database.BeginTransactionAsync();
+            try
+            {
+                _context.ProductReviews.Remove(review);
+                await _context.SaveChangesAsync();
 
-            await RecalculateProductRatingAsync(productId);
+                await RecalculateProductRatingAsync(productId);
 
-            return ApiResponse<object>.SuccessResponse("Review deleted successfully.");
+                await transaction.CommitAsync();
+                return ApiResponse<object>.SuccessResponse("Review deleted successfully.");
+            }
+            catch (Exception)
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
         }
 
         // ==================== Delete Review (Admin) ====================
@@ -172,13 +208,26 @@ namespace MV.ApplicationLayer.Services
             if (review == null)
                 return ApiResponse<object>.ErrorResponse("Review not found.");
 
-            var productId = review.ProductId;
-            _context.ProductReviews.Remove(review);
-            await _context.SaveChangesAsync();
+            using var transaction = await _context.Database.BeginTransactionAsync();
+            try
+            {
+                var productId = review.ProductId;
+                _context.ProductReviews.Remove(review);
+                await _context.SaveChangesAsync();
 
-            await RecalculateProductRatingAsync(productId);
+                await RecalculateProductRatingAsync(productId);
 
-            return ApiResponse<object>.SuccessResponse("Review deleted successfully.");
+                await transaction.CommitAsync();
+
+                _logger.LogWarning("AUDIT: Admin deleted Review {ReviewId} for Product {ProductId} at {Time}", reviewId, productId, DateTime.UtcNow);
+
+                return ApiResponse<object>.SuccessResponse("Review deleted successfully.");
+            }
+            catch (Exception)
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
         }
 
         private async Task RecalculateProductRatingAsync(int productId)

@@ -37,13 +37,25 @@ public partial class User
 
     public virtual ICollection<ChatAiHistory> ChatAiHistories { get; set; } = new List<ChatAiHistory>();
 
+    public virtual ICollection<ChatSupportMessage> ChatSupportMessageCustomers { get; set; } = new List<ChatSupportMessage>();
+
+    public virtual ICollection<ChatSupportMessage> ChatSupportMessageSenders { get; set; } = new List<ChatSupportMessage>();
+
     public virtual ICollection<Notification> Notifications { get; set; } = new List<Notification>();
+
+    public virtual ICollection<Order> OrderCancelledByNavigations { get; set; } = new List<Order>();
+
+    public virtual ICollection<Order> OrderConfirmedByNavigations { get; set; } = new List<Order>();
+
+    public virtual ICollection<Order> OrderShippedByNavigations { get; set; } = new List<Order>();
 
     public virtual ICollection<Order> OrderShippers { get; set; } = new List<Order>();
 
     public virtual ICollection<Order> OrderUsers { get; set; } = new List<Order>();
 
     public virtual ICollection<OtpCode> OtpCodes { get; set; } = new List<OtpCode>();
+
+    public virtual ICollection<Payment> Payments { get; set; } = new List<Payment>();
 
     public virtual ICollection<ProductReview> ProductReviews { get; set; } = new List<ProductReview>();
 

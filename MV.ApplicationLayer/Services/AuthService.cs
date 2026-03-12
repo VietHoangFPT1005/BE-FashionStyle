@@ -13,6 +13,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
+using System.Security.Cryptography;
 
 namespace MV.ApplicationLayer.Services
 {
@@ -227,7 +228,7 @@ namespace MV.ApplicationLayer.Services
                 return ApiResponse<LoginResponse>.ErrorResponse("Invalid email/phone or password.");
 
             // Generate tokens
-            var accessTokenExpireMinutes = int.Parse(_configuration["Jwt:ExpireMinutes"] ?? "60");
+            var accessTokenExpireMinutes = 10; // Fixed to 10 minutes
             var accessToken = GenerateJwtToken(user, accessTokenExpireMinutes);
             var refreshTokenStr = Guid.NewGuid().ToString();
 
@@ -278,7 +279,7 @@ namespace MV.ApplicationLayer.Services
             await _refreshTokenRepository.RevokeAsync(storedToken.Id);
 
             var user = storedToken.User;
-            var accessTokenExpireMinutes = int.Parse(_configuration["Jwt:ExpireMinutes"] ?? "60");
+            var accessTokenExpireMinutes = 10; // Fixed to 10 minutes
 
             // Generate new tokens
             var newAccessToken = GenerateJwtToken(user, accessTokenExpireMinutes);
@@ -491,7 +492,7 @@ namespace MV.ApplicationLayer.Services
             }
 
             // 5. Generate JWT + Refresh Token (same as normal login)
-            var accessTokenExpireMinutes = int.Parse(_configuration["Jwt:ExpireMinutes"] ?? "60");
+            var accessTokenExpireMinutes = 10; // Fixed to 10 minutes
             var accessToken = GenerateJwtToken(user, accessTokenExpireMinutes);
             var refreshTokenStr = Guid.NewGuid().ToString();
 
@@ -576,8 +577,7 @@ namespace MV.ApplicationLayer.Services
         // ==================== Helper Methods ====================
         private string GenerateOtp()
         {
-            var random = new Random();
-            return random.Next(100000, 999999).ToString();
+            return RandomNumberGenerator.GetInt32(100000, 1000000).ToString();
         }
 
         private string GenerateJwtToken(User user, int expireMinutes)

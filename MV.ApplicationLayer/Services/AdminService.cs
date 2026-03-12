@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using MV.ApplicationLayer.ServiceInterfaces;
 using MV.DomainLayer.DTOs.Admin.Request;
 using MV.DomainLayer.DTOs.Admin.Response;
@@ -13,15 +14,18 @@ namespace MV.ApplicationLayer.Services
         private readonly FashionDbContext _context;
         private readonly IUserRepository _userRepository;
         private readonly IRefreshTokenRepository _refreshTokenRepository;
+        private readonly ILogger<AdminService> _logger;
 
         public AdminService(
             FashionDbContext context,
             IUserRepository userRepository,
-            IRefreshTokenRepository refreshTokenRepository)
+            IRefreshTokenRepository refreshTokenRepository,
+            ILogger<AdminService> logger)
         {
             _context = context;
             _userRepository = userRepository;
             _refreshTokenRepository = refreshTokenRepository;
+            _logger = logger;
         }
 
         // ==================== API 16: Change User Role ====================
@@ -38,6 +42,8 @@ namespace MV.ApplicationLayer.Services
             user.Role = request.Role;
             user.UpdatedAt = DateTime.Now;
             await _userRepository.UpdateAsync(user);
+
+            _logger.LogInformation("AUDIT: Admin {AdminId} changed role object of User {UserId} to {NewRole} at {Time}", adminId, userId, request.Role, DateTime.UtcNow);
 
             var roleNames = new Dictionary<int, string>
             {
@@ -66,6 +72,8 @@ namespace MV.ApplicationLayer.Services
             user.IsActive = request.IsActive;
             user.UpdatedAt = DateTime.Now;
             await _userRepository.UpdateAsync(user);
+
+            _logger.LogWarning("AUDIT: Admin {AdminId} changed active status of User {UserId} to {IsActive} at {Time}", adminId, userId, request.IsActive, DateTime.UtcNow);
 
             // If deactivating, revoke all refresh tokens (force logout)
             if (!request.IsActive)

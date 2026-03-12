@@ -57,6 +57,24 @@ public partial class Order
 
     public DateTime? CancelledAt { get; set; }
 
+    public DateTime? UpdatedAt { get; set; }
+
+    public int? ConfirmedBy { get; set; }
+
+    public int? ShippedBy { get; set; }
+
+    public int? CancelledBy { get; set; }
+
+    public string? TrackingNumber { get; set; }
+
+    public string? Carrier { get; set; }
+
+    public DateTime? ExpectedDeliveryDate { get; set; }
+
+    public virtual User? CancelledByNavigation { get; set; }
+
+    public virtual User? ConfirmedByNavigation { get; set; }
+
     public virtual ICollection<OrderItem> OrderItems { get; set; } = new List<OrderItem>();
 
     public virtual Payment? Payment { get; set; }
@@ -64,6 +82,10 @@ public partial class Order
     public virtual ICollection<ProductReview> ProductReviews { get; set; } = new List<ProductReview>();
 
     public virtual Refund? Refund { get; set; }
+
+    public virtual ICollection<SepayTransaction> SepayTransactions { get; set; } = new List<SepayTransaction>();
+
+    public virtual User? ShippedByNavigation { get; set; }
 
     public virtual User? Shipper { get; set; }
 

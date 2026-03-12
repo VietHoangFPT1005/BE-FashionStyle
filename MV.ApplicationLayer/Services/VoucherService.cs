@@ -118,8 +118,10 @@ namespace MV.ApplicationLayer.Services
             var now = DateTime.Now;
             var vouchers = await _context.Vouchers
                 .Where(v => v.IsActive == true
-                    && v.StartDate <= now
-                    && v.EndDate >= now
+                    // StartDate null = không giới hạn ngày bắt đầu, hoặc đã đến ngày
+                    && (v.StartDate == null || v.StartDate <= now)
+                    // EndDate null = không giới hạn ngày kết thúc, hoặc chưa hết hạn
+                    && (v.EndDate == null || v.EndDate >= now)
                     && (!v.UsageLimit.HasValue || (v.UsedCount ?? 0) < v.UsageLimit.Value))
                 .OrderByDescending(v => v.CreatedAt)
                 .ToListAsync();

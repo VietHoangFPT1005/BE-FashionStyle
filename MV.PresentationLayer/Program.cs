@@ -1,13 +1,16 @@
-﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using MV.ApplicationLayer.Interfaces;
 using MV.ApplicationLayer.ServiceInterfaces;
 using MV.ApplicationLayer.Services;
 using MV.DomainLayer.Configuration;
 using MV.InfrastructureLayer.DBContext;
 using MV.InfrastructureLayer.Interfaces;
 using MV.InfrastructureLayer.Repositories;
+using MV.PresentationLayer.Hubs; // [CHAT SUPPORT - MỚI THÊM]
 using System.Text;
 
 namespace MV.PresentationLayer
@@ -26,10 +29,9 @@ namespace MV.PresentationLayer
             {
                 options.AddPolicy("AllowFrontend", policy =>
                 {
-                    policy.WithOrigins("https://localhost:7159")
+                    policy.AllowAnyOrigin()
                         .AllowAnyMethod()
-                        .AllowAnyHeader()
-                        .AllowCredentials();
+                        .AllowAnyHeader();
                 });
             });
 
@@ -88,6 +90,24 @@ namespace MV.PresentationLayer
                             Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]!)
                         )
                     };
+
+                    // [CHAT SUPPORT - MỚI THÊM]
+                    // SignalR trên mobile gửi JWT qua query string thay vì header
+                    options.Events = new JwtBearerEvents
+                    {
+                        OnMessageReceived = context =>
+                        {
+                            var accessToken = context.Request.Query["access_token"];
+                            var path = context.HttpContext.Request.Path;
+                            // Chỉ áp dụng cho hub endpoint
+                            if (!string.IsNullOrEmpty(accessToken) &&
+                                path.StartsWithSegments("/hubs/chat"))
+                            {
+                                context.Token = accessToken;
+                            }
+                            return Task.CompletedTask;
+                        }
+                    };
                 });
 
             builder.Services.AddAuthorization();
@@ -108,9 +128,15 @@ namespace MV.PresentationLayer
             builder.Services.Configure<GeminiSettings>(builder.Configuration.GetSection("Gemini"));
             builder.Services.Configure<GoogleSettings>(builder.Configuration.GetSection("Google"));
 
-            // Register DbContext
+            // Register DbContext with connection pooling for production performance
+            var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+            if (!connectionString!.Contains("Maximum Pool Size", StringComparison.OrdinalIgnoreCase))
+                connectionString += ";Maximum Pool Size=20;Minimum Pool Size=1;Connection Idle Lifetime=60";
+
             builder.Services.AddDbContext<FashionDbContext>(options =>
-                options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+                options.UseNpgsql(connectionString,
+                    npgsqlOptions => npgsqlOptions.MigrationsAssembly("MV.InfrastructureLayer"))
+                .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning)));
 
             // Repositories - Milestone 1
             builder.Services.AddScoped<IUserRepository, UserRepository>();
@@ -149,11 +175,16 @@ namespace MV.PresentationLayer
             builder.Services.AddScoped<IOrderItemRepository, OrderItemRepository>();
             builder.Services.AddScoped<IPaymentRepository, PaymentRepository>();
             builder.Services.AddScoped<INotificationRepository, NotificationRepository>();
+            builder.Services.AddScoped<ISepayTransactionRepository, SepayTransactionRepository>();
 
             // Services - Milestone 3
             builder.Services.AddScoped<IOrderService, OrderService>();
             builder.Services.AddScoped<IPaymentService, PaymentService>();
             builder.Services.AddScoped<IReviewService, ReviewService>();
+
+            // Background Services - Payment expiry auto-cancel + SePay polling
+            builder.Services.AddHostedService<PaymentExpiryBackgroundService>();
+            builder.Services.AddHostedService<SepayPollingBackgroundService>();
 
             // Repositories - Milestone 4
             builder.Services.AddScoped<IShipperLocationRepository, ShipperLocationRepository>();
@@ -169,8 +200,21 @@ namespace MV.PresentationLayer
             builder.Services.AddScoped<IAdminProductService, AdminProductService>();
             builder.Services.AddScoped<IRefundService, RefundService>();
 
+            // [CHAT SUPPORT - MỚI THÊM] Repository + Service cho chat hỗ trợ
+            builder.Services.AddScoped<IChatSupportRepository, ChatSupportRepository>();
+            builder.Services.AddScoped<IChatSupportService, ChatSupportService>();
+
+            // [CHAT SUPPORT - MỚI THÊM] Đăng ký SignalR
+            builder.Services.AddSignalR();
+
             // HttpClient for external API calls
             builder.Services.AddHttpClient();
+
+            // Prevent background service exceptions from crashing the host
+            builder.Services.Configure<HostOptions>(options =>
+            {
+                options.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.Ignore;
+            });
 
             builder.Services.AddEndpointsApiExplorer();
 
@@ -186,7 +230,7 @@ namespace MV.PresentationLayer
                 app.UseSwaggerUI(); // Đã mở comment dòng này để giao diện không bị 404
             }
 
-            app.UseHttpsRedirection();
+            // app.UseHttpsRedirection(); // Đã đóng comment để cho phép Flutter HTTP (10.0.2.2) truy cập không bị lỗi 307 Redirect
             app.UseStaticFiles();
 
             // Enable CORS - must be before Authentication/Authorization
@@ -196,6 +240,9 @@ namespace MV.PresentationLayer
             app.UseAuthorization();
 
             app.MapControllers();
+
+            // [CHAT SUPPORT - MỚI THÊM] Map SignalR Hub tại /hubs/chat
+            app.MapHub<ChatHub>("/hubs/chat");
 
             app.Run();
         }

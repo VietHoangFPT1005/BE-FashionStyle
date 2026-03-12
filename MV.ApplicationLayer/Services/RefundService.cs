@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using MV.ApplicationLayer.ServiceInterfaces;
 using MV.DomainLayer.DTOs.Common;
 using MV.DomainLayer.DTOs.Refund.Request;
@@ -10,10 +11,12 @@ namespace MV.ApplicationLayer.Services
     public class RefundService : IRefundService
     {
         private readonly FashionDbContext _context;
+        private readonly ILogger<RefundService> _logger;
 
-        public RefundService(FashionDbContext context)
+        public RefundService(FashionDbContext context, ILogger<RefundService> logger)
         {
             _context = context;
+            _logger = logger;
         }
 
         public async Task<ApiResponse<RefundResponse>> RequestRefundAsync(
@@ -48,21 +51,32 @@ namespace MV.ApplicationLayer.Services
                 CreatedAt = DateTime.Now
             };
 
-            _context.Refunds.Add(refund);
-            await _context.SaveChangesAsync();
-
-            return ApiResponse<RefundResponse>.SuccessResponse(new RefundResponse
+            using var transaction = await _context.Database.BeginTransactionAsync();
+            try
             {
-                RefundId = refund.Id,
-                OrderId = orderId,
-                OrderCode = order.OrderCode,
-                UserId = userId,
-                CustomerName = order.User.FullName,
-                Reason = refund.Reason,
-                Status = refund.Status!,
-                OrderTotal = order.Total,
-                CreatedAt = refund.CreatedAt
-            }, "Refund request submitted successfully.");
+                _context.Refunds.Add(refund);
+                await _context.SaveChangesAsync();
+
+                await transaction.CommitAsync();
+
+                return ApiResponse<RefundResponse>.SuccessResponse(new RefundResponse
+                {
+                    RefundId = refund.Id,
+                    OrderId = orderId,
+                    OrderCode = order.OrderCode,
+                    UserId = userId,
+                    CustomerName = order.User.FullName,
+                    Reason = refund.Reason,
+                    Status = refund.Status!,
+                    OrderTotal = order.Total,
+                    CreatedAt = refund.CreatedAt
+                }, "Refund request submitted successfully.");
+            }
+            catch (Exception)
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
         }
 
         public async Task<ApiResponse<RefundResponse>> GetRefundByOrderAsync(int userId, int orderId)
@@ -138,18 +152,30 @@ namespace MV.ApplicationLayer.Services
             if (refund.Status != "PENDING")
                 return ApiResponse<RefundResponse>.ErrorResponse("This refund has already been processed.");
 
-            refund.Status = "APPROVED";
-            refund.AdminNote = request.AdminNote;
-            refund.ProcessedAt = DateTime.Now;
-            refund.ProcessedBy = adminId;
+            using var transaction = await _context.Database.BeginTransactionAsync();
+            try
+            {
+                refund.Status = "APPROVED";
+                refund.AdminNote = request.AdminNote;
+                refund.ProcessedAt = DateTime.Now;
+                refund.ProcessedBy = adminId;
 
-            // Update order status to REFUNDED
-            refund.Order.Status = "REFUNDED";
+                // Update order status to REFUNDED
+                refund.Order.Status = "REFUNDED";
 
-            await _context.SaveChangesAsync();
+                await _context.SaveChangesAsync();
+                await transaction.CommitAsync();
 
-            return ApiResponse<RefundResponse>.SuccessResponse(
-                await MapToRefundResponse(refund), "Refund approved successfully.");
+                _logger.LogInformation("AUDIT: Admin {AdminId} approved Refund {RefundId} for Order {OrderId} at {Time}", adminId, refundId, refund.OrderId, DateTime.UtcNow);
+
+                return ApiResponse<RefundResponse>.SuccessResponse(
+                    await MapToRefundResponse(refund), "Refund approved successfully.");
+            }
+            catch (Exception)
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
         }
 
         public async Task<ApiResponse<RefundResponse>> RejectRefundAsync(
@@ -166,15 +192,27 @@ namespace MV.ApplicationLayer.Services
             if (refund.Status != "PENDING")
                 return ApiResponse<RefundResponse>.ErrorResponse("This refund has already been processed.");
 
-            refund.Status = "REJECTED";
-            refund.AdminNote = request.AdminNote;
-            refund.ProcessedAt = DateTime.Now;
-            refund.ProcessedBy = adminId;
+            using var transaction = await _context.Database.BeginTransactionAsync();
+            try
+            {
+                refund.Status = "REJECTED";
+                refund.AdminNote = request.AdminNote;
+                refund.ProcessedAt = DateTime.Now;
+                refund.ProcessedBy = adminId;
 
-            await _context.SaveChangesAsync();
+                await _context.SaveChangesAsync();
+                await transaction.CommitAsync();
 
-            return ApiResponse<RefundResponse>.SuccessResponse(
-                await MapToRefundResponse(refund), "Refund rejected.");
+                _logger.LogInformation("AUDIT: Admin {AdminId} rejected Refund {RefundId} for Order {OrderId}. Note: {Note} at {Time}", adminId, refundId, refund.OrderId, request.AdminNote, DateTime.UtcNow);
+
+                return ApiResponse<RefundResponse>.SuccessResponse(
+                    await MapToRefundResponse(refund), "Refund rejected.");
+            }
+            catch (Exception)
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
         }
 
         private async Task<RefundResponse> MapToRefundResponse(DomainLayer.Entities.Refund refund)

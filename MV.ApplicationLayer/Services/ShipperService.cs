@@ -67,7 +67,7 @@ namespace MV.ApplicationLayer.Services
         }
 
         // ==================== API 2: Pickup Order (Start Shipping) ====================
-        public async Task<ApiResponse<object>> PickupOrderAsync(int shipperId, int orderId)
+        public async Task<ApiResponse<object>> PickupOrderAsync(int shipperId, int orderId, PickupOrderRequest request)
         {
             var order = await _context.Orders
                 .Include(o => o.Payment)
@@ -80,25 +80,51 @@ namespace MV.ApplicationLayer.Services
                 return ApiResponse<object>.ErrorResponse(
                     "Order is not in PROCESSING status. Cannot start shipping.");
 
-            order.Status = "SHIPPING";
-            order.ShippedAt = DateTime.Now;
-            _context.Orders.Update(order);
+            // TrackingNumber is required (validated by [Required] in DTO, double-check here)
+            if (string.IsNullOrWhiteSpace(request.TrackingNumber))
+                return ApiResponse<object>.ErrorResponse(
+                    "Tracking number is required when starting shipping.");
 
-            // Notification to customer
-            _context.Notifications.Add(new Notification
+            using var transaction = await _context.Database.BeginTransactionAsync();
+            try
             {
-                UserId = order.UserId,
-                Type = "SHIPPING",
-                Title = "Order is being delivered",
-                Message = $"Your order {order.OrderCode} is being delivered to you.",
-                Data = $"{{\"orderId\":{order.Id},\"screen\":\"ORDER_TRACKING\"}}",
-                IsRead = false,
-                CreatedAt = DateTime.Now
-            });
+                order.Status = "SHIPPING";
+                order.ShippedAt = DateTime.Now;
 
-            await _context.SaveChangesAsync();
+                // TODO: Uncomment sau khi chạy SQL script (alter_orders_payments.sql) + re-scaffold entities
+                order.TrackingNumber = request.TrackingNumber.Trim();
+                order.Carrier = request.Carrier?.Trim();
+                order.ExpectedDeliveryDate = request.ExpectedDeliveryDate;
 
-            return ApiResponse<object>.SuccessResponse("Order picked up. Delivery started.");
+                _context.Orders.Update(order);
+
+                // Notification to customer
+                _context.Notifications.Add(new Notification
+                {
+                    UserId = order.UserId,
+                    Type = "SHIPPING",
+                    Title = "Đơn hàng đang giao",
+                    Message = $"Đơn hàng {order.OrderCode} đang được giao đến bạn. Mã vận đơn: {request.TrackingNumber}",
+                    Data = $"{{\"orderId\":{order.Id},\"screen\":\"ORDER_TRACKING\"}}",
+                    IsRead = false,
+                    CreatedAt = DateTime.Now
+                });
+
+                await _context.SaveChangesAsync();
+                await transaction.CommitAsync();
+
+                return ApiResponse<object>.SuccessResponse(new
+                {
+                    trackingNumber = request.TrackingNumber,
+                    carrier = request.Carrier,
+                    expectedDeliveryDate = request.ExpectedDeliveryDate
+                }, "Order picked up. Delivery started.");
+            }
+            catch (Exception)
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
         }
 
         // ==================== API 3: Deliver Order (Confirm Delivery) ====================
@@ -115,33 +141,43 @@ namespace MV.ApplicationLayer.Services
                 return ApiResponse<object>.ErrorResponse(
                     "Order is not in SHIPPING status. Cannot confirm delivery.");
 
-            order.Status = "DELIVERED";
-            order.DeliveredAt = DateTime.Now;
-
-            // If COD payment, mark as completed
-            if (order.Payment != null && order.Payment.PaymentMethod == "COD")
+            using var transaction = await _context.Database.BeginTransactionAsync();
+            try
             {
-                order.Payment.Status = "COMPLETED";
-                order.Payment.PaidAt = DateTime.Now;
+                order.Status = "DELIVERED";
+                order.DeliveredAt = DateTime.Now;
+
+                // If COD payment, mark as completed
+                if (order.Payment != null && order.Payment.PaymentMethod == "COD")
+                {
+                    order.Payment.Status = "COMPLETED";
+                    order.Payment.PaidAt = DateTime.Now;
+                }
+
+                _context.Orders.Update(order);
+
+                // Notification to customer
+                _context.Notifications.Add(new Notification
+                {
+                    UserId = order.UserId,
+                    Type = "ORDER",
+                    Title = "Order delivered successfully",
+                    Message = $"Your order {order.OrderCode} has been delivered successfully.",
+                    Data = $"{{\"orderId\":{order.Id},\"screen\":\"ORDER_DETAIL\"}}",
+                    IsRead = false,
+                    CreatedAt = DateTime.Now
+                });
+
+                await _context.SaveChangesAsync();
+                await transaction.CommitAsync();
+
+                return ApiResponse<object>.SuccessResponse("Order delivered successfully.");
             }
-
-            _context.Orders.Update(order);
-
-            // Notification to customer
-            _context.Notifications.Add(new Notification
+            catch (Exception)
             {
-                UserId = order.UserId,
-                Type = "ORDER",
-                Title = "Order delivered successfully",
-                Message = $"Your order {order.OrderCode} has been delivered successfully.",
-                Data = $"{{\"orderId\":{order.Id},\"screen\":\"ORDER_DETAIL\"}}",
-                IsRead = false,
-                CreatedAt = DateTime.Now
-            });
-
-            await _context.SaveChangesAsync();
-
-            return ApiResponse<object>.SuccessResponse("Order delivered successfully.");
+                await transaction.RollbackAsync();
+                throw;
+            }
         }
 
         // ==================== API 4: Delivery Failed ====================
@@ -195,6 +231,18 @@ namespace MV.ApplicationLayer.Services
                         }
                     }
 
+                    // Restore voucher UsedCount if voucher was used
+                    if (order.VoucherId.HasValue)
+                    {
+                        var voucher = await _context.Vouchers
+                            .FirstOrDefaultAsync(v => v.Id == order.VoucherId.Value);
+                        if (voucher != null)
+                        {
+                            voucher.UsedCount = Math.Max(0, (voucher.UsedCount ?? 0) - 1);
+                            _context.Vouchers.Update(voucher);
+                        }
+                    }
+
                     // Handle refund if SePay completed
                     if (order.Payment != null && order.Payment.PaymentMethod == "SEPAY"
                         && order.Payment.Status == "COMPLETED")
@@ -233,27 +281,37 @@ namespace MV.ApplicationLayer.Services
             }
             else
             {
-                _context.Orders.Update(order);
-
-                // Notification to customer
-                _context.Notifications.Add(new Notification
+                using var transaction = await _context.Database.BeginTransactionAsync();
+                try
                 {
-                    UserId = order.UserId,
-                    Type = "SHIPPING",
-                    Title = "Delivery unsuccessful",
-                    Message = $"Delivery attempt for order {order.OrderCode} was unsuccessful. Will retry.",
-                    Data = $"{{\"orderId\":{order.Id},\"screen\":\"ORDER_TRACKING\"}}",
-                    IsRead = false,
-                    CreatedAt = DateTime.Now
-                });
+                    _context.Orders.Update(order);
 
-                await _context.SaveChangesAsync();
+                    // Notification to customer
+                    _context.Notifications.Add(new Notification
+                    {
+                        UserId = order.UserId,
+                        Type = "SHIPPING",
+                        Title = "Delivery unsuccessful",
+                        Message = $"Delivery attempt for order {order.OrderCode} was unsuccessful. Will retry.",
+                        Data = $"{{\"orderId\":{order.Id},\"screen\":\"ORDER_TRACKING\"}}",
+                        IsRead = false,
+                        CreatedAt = DateTime.Now
+                    });
 
-                return ApiResponse<object>.SuccessResponse(new
+                    await _context.SaveChangesAsync();
+                    await transaction.CommitAsync();
+
+                    return ApiResponse<object>.SuccessResponse(new
+                    {
+                        deliveryAttempts = order.DeliveryAttempts,
+                        maxAttempts = maxAttempts
+                    }, $"Delivery failed. Attempt {order.DeliveryAttempts}/{maxAttempts}.");
+                }
+                catch (Exception)
                 {
-                    deliveryAttempts = order.DeliveryAttempts,
-                    maxAttempts = maxAttempts
-                }, $"Delivery failed. Attempt {order.DeliveryAttempts}/{maxAttempts}.");
+                    await transaction.RollbackAsync();
+                    throw;
+                }
             }
         }
 
