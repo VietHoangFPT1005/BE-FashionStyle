@@ -23,11 +23,13 @@ namespace MV.PresentationLayer.Hubs;
 [Authorize]
 public class ChatHub : Hub
 {
-    private readonly IChatSupportService _chatService;
+    // Dùng IServiceScopeFactory thay vì inject trực tiếp IChatSupportService
+    // để mỗi method call có DbContext riêng, tránh concurrent DbContext exception
+    private readonly IServiceScopeFactory _scopeFactory;
 
-    public ChatHub(IChatSupportService chatService)
+    public ChatHub(IServiceScopeFactory scopeFactory)
     {
-        _chatService = chatService;
+        _scopeFactory = scopeFactory;
     }
 
     // ── Kết nối ──────────────────────────────────────────────────
@@ -66,8 +68,12 @@ public class ChatHub : Hub
         var customerId = GetUserId();   // Customer chính là người gửi
         var senderId   = customerId;
 
+        // Tạo scope mới → DbContext mới → không bị concurrent conflict
+        using var scope = _scopeFactory.CreateScope();
+        var chatService = scope.ServiceProvider.GetRequiredService<IChatSupportService>();
+
         // Lưu vào DB
-        var dto = await _chatService.SaveMessageAsync(
+        var dto = await chatService.SaveMessageAsync(
             customerId: customerId,
             senderId:   senderId,
             senderRole: 3,          // 3 = Customer
@@ -94,8 +100,12 @@ public class ChatHub : Hub
         // Chỉ Staff (2) và Admin (1) mới được gọi method này
         if (senderRole != 1 && senderRole != 2) return;
 
+        // Tạo scope mới → DbContext mới → không bị concurrent conflict
+        using var scope = _scopeFactory.CreateScope();
+        var chatService = scope.ServiceProvider.GetRequiredService<IChatSupportService>();
+
         // Lưu vào DB
-        var dto = await _chatService.SaveMessageAsync(
+        var dto = await chatService.SaveMessageAsync(
             customerId: customerId,
             senderId:   senderId,
             senderRole: senderRole,

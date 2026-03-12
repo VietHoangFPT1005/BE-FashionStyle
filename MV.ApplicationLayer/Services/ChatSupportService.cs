@@ -35,17 +35,21 @@ public class ChatSupportService : IChatSupportService
     {
         var latestMessages = await _repo.GetLatestMessagePerCustomerAsync();
 
-        var tasks = latestMessages.Select(async m => new SupportConversationDto
+        // Dùng sequential loop thay vì Task.WhenAll để tránh concurrent DbContext access
+        var result = new List<SupportConversationDto>();
+        foreach (var m in latestMessages)
         {
-            CustomerId    = m.CustomerId,
-            CustomerName  = m.Customer?.FullName ?? m.Customer?.Username ?? "Khách hàng",
-            CustomerAvatar = m.Customer?.AvatarUrl,
-            LastMessage   = m.Message,
-            LastMessageAt = m.CreatedAt,
-            UnreadCount   = await _repo.GetUnreadCountAsync(m.CustomerId)
-        });
-
-        return (await Task.WhenAll(tasks)).ToList();
+            result.Add(new SupportConversationDto
+            {
+                CustomerId     = m.CustomerId,
+                CustomerName   = m.Customer?.FullName ?? m.Customer?.Username ?? "Khách hàng",
+                CustomerAvatar = m.Customer?.AvatarUrl,
+                LastMessage    = m.Message,
+                LastMessageAt  = m.CreatedAt,
+                UnreadCount    = await _repo.GetUnreadCountAsync(m.CustomerId)
+            });
+        }
+        return result;
     }
 
     // Lưu tin nhắn mới vào DB và trả về DTO
