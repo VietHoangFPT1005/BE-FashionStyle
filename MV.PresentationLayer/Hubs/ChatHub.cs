@@ -11,7 +11,7 @@
 
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
-using MV.ApplicationLayer.ServiceInterfaces;
+using MV.ApplicationLayer.Interfaces;
 using System.Security.Claims;
 
 namespace MV.PresentationLayer.Hubs;

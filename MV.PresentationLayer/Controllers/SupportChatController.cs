@@ -1,5 +1,5 @@
 // ================================================================
-// [CHAT SUPPORT - MỚI THÊM]
+// [CHAT SUPPORT]
 // REST Controller cho chat hỗ trợ
 //
 // Endpoints:
@@ -7,12 +7,16 @@
 //   GET  /api/SupportChat/conversations        → Staff/Admin lấy danh sách hội thoại
 //   GET  /api/SupportChat/history/{customerId} → Staff/Admin lấy lịch sử chat của customer
 //   PUT  /api/SupportChat/read/{customerId}    → Staff/Admin đánh dấu đã đọc
+//   POST /api/SupportChat/upload-image         → Upload ảnh chat lên Cloudinary
 // ================================================================
 
+using CloudinaryDotNet;
+using CloudinaryDotNet.Actions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using MV.ApplicationLayer.ServiceInterfaces;
-using MV.DomainLayer.DTOs.Common;  // ApiResponse nằm ở đây, không phải Configuration
+using Microsoft.Extensions.Configuration;
+using MV.ApplicationLayer.Interfaces;
+using MV.DomainLayer.DTOs.Common;
 using System.Security.Claims;
 
 namespace MV.PresentationLayer.Controllers;
@@ -27,10 +31,12 @@ namespace MV.PresentationLayer.Controllers;
 public class SupportChatController : ControllerBase
 {
     private readonly IChatSupportService _chatService;
+    private readonly IConfiguration _config;
 
-    public SupportChatController(IChatSupportService chatService)
+    public SupportChatController(IChatSupportService chatService, IConfiguration config)
     {
         _chatService = chatService;
+        _config      = config;
     }
 
     // ── Customer: lấy lịch sử chat của chính mình ─────────────
@@ -84,6 +90,41 @@ public class SupportChatController : ControllerBase
     {
         await _chatService.MarkAsReadAsync(customerId);
         return Ok(ApiResponse.SuccessResponse("Đã đánh dấu đã đọc"));
+    }
+
+    // ── Upload hình ảnh ───────────────────────────────────────
+
+    /// <summary>
+    /// Upload ảnh chat lên Cloudinary, trả về secure URL
+    /// POST /api/SupportChat/upload-image  (multipart/form-data, field name: file)
+    /// </summary>
+    [HttpPost("upload-image")]
+    [Consumes("multipart/form-data")]
+    public async Task<IActionResult> UploadChatImage([FromForm] IFormFile file)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest(ApiResponse.ErrorResponse("Không có file được gửi lên."));
+
+        var cloudName = _config["CloudinarySettings:CloudName"];
+        var apiKey    = _config["CloudinarySettings:ApiKey"];
+        var apiSecret = _config["CloudinarySettings:ApiSecret"];
+
+        var account    = new Account(cloudName, apiKey, apiSecret);
+        var cloudinary = new Cloudinary(account);
+
+        using var stream = file.OpenReadStream();
+        var uploadParams = new ImageUploadParams
+        {
+            File       = new FileDescription(file.FileName, stream),
+            Folder     = "chat-images",
+            UseFilename = false,
+        };
+
+        var result = await cloudinary.UploadAsync(uploadParams);
+        if (result.Error != null)
+            return BadRequest(ApiResponse.ErrorResponse(result.Error.Message));
+
+        return Ok(ApiResponse.SuccessResponse(result.SecureUrl.ToString()));
     }
 
     // ── Helper ────────────────────────────────────────────────

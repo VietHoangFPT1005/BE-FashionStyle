@@ -3,7 +3,7 @@
 // Service implementation cho chat hỗ trợ Customer <-> Staff/Admin
 // ================================================================
 
-using MV.ApplicationLayer.ServiceInterfaces;
+using MV.ApplicationLayer.Interfaces;
 using MV.DomainLayer.DTOs.Chat.Response;
 using MV.DomainLayer.Entities;
 using MV.InfrastructureLayer.Interfaces;

@@ -5,7 +5,7 @@
 
 using MV.DomainLayer.DTOs.Chat.Response;
 
-namespace MV.ApplicationLayer.ServiceInterfaces;
+namespace MV.ApplicationLayer.Interfaces;
 
 /// <summary>
 /// [CHAT SUPPORT - MỚI THÊM]
