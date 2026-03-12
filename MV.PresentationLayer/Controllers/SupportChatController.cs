@@ -21,6 +21,11 @@ using System.Security.Claims;
 
 namespace MV.PresentationLayer.Controllers;
 
+public class UploadImageRequest
+{
+    public IFormFile File { get; set; } = null!;
+}
+
 /// <summary>
 /// [CHAT SUPPORT - MỚI THÊM]
 /// REST API để load lịch sử chat (trước khi SignalR kết nối)
@@ -100,8 +105,9 @@ public class SupportChatController : ControllerBase
     /// </summary>
     [HttpPost("upload-image")]
     [Consumes("multipart/form-data")]
-    public async Task<IActionResult> UploadChatImage([FromForm] IFormFile file)
+    public async Task<IActionResult> UploadChatImage([FromForm] UploadImageRequest request)
     {
+        var file = request.File;
         if (file == null || file.Length == 0)
             return BadRequest(ApiResponse.ErrorResponse("Không có file được gửi lên."));
 
