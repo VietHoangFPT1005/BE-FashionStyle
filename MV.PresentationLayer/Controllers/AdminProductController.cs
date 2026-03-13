@@ -1,5 +1,8 @@
+using CloudinaryDotNet;
+using CloudinaryDotNet.Actions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using MV.ApplicationLayer.ServiceInterfaces;
 using MV.DomainLayer.DTOs.Admin.Request;
 using MV.DomainLayer.DTOs.Common;
@@ -14,10 +17,12 @@ namespace MV.PresentationLayer.Controllers
     public class AdminProductController : ControllerBase
     {
         private readonly IAdminProductService _adminProductService;
+        private readonly IConfiguration _config;
 
-        public AdminProductController(IAdminProductService adminProductService)
+        public AdminProductController(IAdminProductService adminProductService, IConfiguration config)
         {
             _adminProductService = adminProductService;
+            _config = config;
         }
 
         #region Product CRUD
@@ -208,6 +213,44 @@ namespace MV.PresentationLayer.Controllers
         #endregion
 
         #region Image CRUD
+
+        /// <summary>
+        /// Upload product image to Cloudinary and return URL (Admin/Staff)
+        /// </summary>
+        [HttpPost("upload-image")]
+        [Consumes("multipart/form-data")]
+        [SwaggerOperation(Summary = "Upload product image to Cloudinary (Admin/Staff)")]
+        public async Task<IActionResult> UploadProductImage([FromForm] UploadImageRequest request)
+        {
+            if (!IsAdminOrStaff())
+                return StatusCode(StatusCodes.Status403Forbidden,
+                    ApiResponse.ErrorResponse("Access denied. Admin or Staff role required."));
+
+            var file = request.File;
+            if (file == null || file.Length == 0)
+                return BadRequest(ApiResponse.ErrorResponse("Không có file được gửi lên."));
+
+            var cloudName = _config["CloudinarySettings:CloudName"];
+            var apiKey    = _config["CloudinarySettings:ApiKey"];
+            var apiSecret = _config["CloudinarySettings:ApiSecret"];
+
+            var account    = new Account(cloudName, apiKey, apiSecret);
+            var cloudinary = new Cloudinary(account);
+
+            using var stream = file.OpenReadStream();
+            var uploadParams = new ImageUploadParams
+            {
+                File        = new FileDescription(file.FileName, stream),
+                Folder      = "product-images",
+                UseFilename = false,
+            };
+
+            var result = await cloudinary.UploadAsync(uploadParams);
+            if (result.Error != null)
+                return BadRequest(ApiResponse.ErrorResponse(result.Error.Message));
+
+            return Ok(ApiResponse.SuccessResponse(result.SecureUrl.ToString()));
+        }
 
         /// <summary>
         /// Add image to product (Admin/Staff)
