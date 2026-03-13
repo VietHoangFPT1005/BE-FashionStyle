@@ -1,7 +1,8 @@
-﻿using System;
-using System.Collections.Generic;
+﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using MV.DomainLayer.Entities;
-using Microsoft.EntityFrameworkCore;
+using System;
+using System.Collections.Generic;
 
 namespace MV.InfrastructureLayer.DBContext;
 
@@ -62,9 +63,19 @@ public partial class FashionDbContext : DbContext
 
     public virtual DbSet<Wishlist> Wishlists { get; set; }
 
+    private string GetConnectionString()
+    {
+        IConfiguration config = new ConfigurationBuilder()
+             .SetBasePath(Directory.GetCurrentDirectory())
+                    .AddJsonFile("appsettings.json", true, true)
+                    .Build();
+        var strConn = config["ConnectionStrings:DefaultConnection"];
+
+        return strConn!;
+    }
+
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
-#warning To protect potentially sensitive information in your connection string, you should move it out of source code. You can avoid scaffolding the connection string by using the Name= syntax to read it from configuration - see https://go.microsoft.com/fwlink/?linkid=2131148. For more guidance on storing connection strings, see https://go.microsoft.com/fwlink/?LinkId=723263.
-        => optionsBuilder.UseNpgsql("Host=localhost;Port=5432;Database=FASHION-DB;Username=postgres;Password=12345");
+        => optionsBuilder.UseNpgsql(GetConnectionString());
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
