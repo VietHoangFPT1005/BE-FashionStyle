@@ -86,8 +86,12 @@ namespace MV.ApplicationLayer.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error calling Gemini API");
-                aiResponse = "Xin lỗi bạn, mình đang gặp sự cố kỹ thuật tạm thời. Vui lòng thử lại sau ít phút nhé! 🙏";
+                _logger.LogError(ex, "Error calling Gemini API: {Message}", ex.Message);
+                // Trả về lỗi thực tế khi development để dễ debug
+                var isDev = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") == "Development";
+                aiResponse = isDev
+                    ? $"[DEBUG] Gemini API lỗi: {ex.Message}"
+                    : "Xin lỗi bạn, mình đang gặp sự cố kỹ thuật tạm thời. Vui lòng thử lại sau ít phút nhé! 🙏";
             }
 
             // 8. Extract suggested product IDs from AI response
@@ -451,7 +455,7 @@ namespace MV.ApplicationLayer.Services
         {
             var httpClient = _httpClientFactory.CreateClient();
 
-            var url = $"https://generativelanguage.googleapis.com/v1/models/{_geminiSettings.Model}:generateContent?key={_geminiSettings.ApiKey}";
+            var url = $"https://generativelanguage.googleapis.com/v1beta/models/{_geminiSettings.Model}:generateContent?key={_geminiSettings.ApiKey}";
 
             var requestBody = new
             {
@@ -478,7 +482,8 @@ namespace MV.ApplicationLayer.Services
             if (!response.IsSuccessStatusCode)
             {
                 var errorBody = await response.Content.ReadAsStringAsync();
-                throw new Exception($"Gemini API error: {response.StatusCode} - {errorBody}");
+                _logger.LogError("Gemini API HTTP {StatusCode}: {Body}", (int)response.StatusCode, errorBody);
+                throw new Exception($"Gemini API error {(int)response.StatusCode}: {errorBody}");
             }
 
             var responseBody = await response.Content.ReadAsStringAsync();
