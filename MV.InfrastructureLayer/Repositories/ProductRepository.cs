@@ -39,7 +39,7 @@ namespace MV.InfrastructureLayer.Repositories
         {
             var query = _context.Products
                 .Include(p => p.Category)
-                .Include(p => p.ProductImages.Where(img => img.IsPrimary == true))
+                .Include(p => p.ProductImages.OrderByDescending(img => img.IsPrimary).Take(1))
                 .Include(p => p.ProductVariants.Where(v => v.IsActive == true && v.StockQuantity > 0))
                 .Where(p => p.IsActive == true && p.IsDeleted == false)
                 .AsQueryable();
@@ -127,7 +127,7 @@ namespace MV.InfrastructureLayer.Repositories
         {
             var keywordLower = keyword.ToLower();
             return await _context.Products
-                .Include(p => p.ProductImages.Where(img => img.IsPrimary == true))
+                .Include(p => p.ProductImages.OrderByDescending(img => img.IsPrimary).Take(1))
                 .Where(p => p.IsActive == true && p.IsDeleted == false)
                 .Where(p => p.Name.ToLower().Contains(keywordLower)
                     || (p.Description != null && p.Description.ToLower().Contains(keywordLower))

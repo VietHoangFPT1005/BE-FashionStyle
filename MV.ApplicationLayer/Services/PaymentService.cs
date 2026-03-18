@@ -598,7 +598,7 @@ namespace MV.ApplicationLayer.Services
                 return null;
 
             var match = System.Text.RegularExpressions.Regex.Match(
-                content, @"SEVQR-\d{8}-\d{4}");
+                content, @"SEVQR\d{8}\d{4}");
 
             return match.Success ? match.Value : null;
         }

@@ -74,6 +74,7 @@ namespace MV.ApplicationLayer.Services
                 Price = p.Price,
                 SalePrice = p.SalePrice,
                 PrimaryImage = p.ProductImages.FirstOrDefault(img => img.IsPrimary == true)?.ImageUrl
+                    ?? p.ProductImages.FirstOrDefault()?.ImageUrl
             }).ToList();
 
             return ApiResponse<List<ProductSearchResponse>>.SuccessResponse(response);
@@ -409,7 +410,8 @@ namespace MV.ApplicationLayer.Services
                     Gender = p.Gender,
                     BrandName = p.BrandName,
                     Tags = p.Tags,
-                    PrimaryImage = p.ProductImages.FirstOrDefault(img => img.IsPrimary == true)?.ImageUrl,
+                    PrimaryImage = p.ProductImages.FirstOrDefault(img => img.IsPrimary == true)?.ImageUrl
+                        ?? p.ProductImages.FirstOrDefault()?.ImageUrl,
                     Category = p.Category != null ? new ProductCategoryInfo
                     {
                         CategoryId = p.Category.Id,

@@ -249,7 +249,8 @@ namespace MV.PresentationLayer.Controllers
             if (result.Error != null)
                 return BadRequest(ApiResponse.ErrorResponse(result.Error.Message));
 
-            return Ok(ApiResponse.SuccessResponse(result.SecureUrl.ToString()));
+            var imageUrl = result.SecureUrl.ToString();
+            return Ok(new ApiResponse<string> { Success = true, Data = imageUrl, Message = "Upload thành công." });
         }
 
         /// <summary>
