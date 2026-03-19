@@ -44,7 +44,7 @@ namespace MV.ApplicationLayer.Services
             // 1. Generate or use existing sessionId
             var sessionId = request.SessionId ?? Guid.NewGuid().ToString();
 
-            // 2. Get user body profile
+            // 2. Get user body profile from DB
             var bodyProfile = await _context.UserBodyProfiles
                 .FirstOrDefaultAsync(bp => bp.UserId == userId);
 
@@ -55,13 +55,28 @@ namespace MV.ApplicationLayer.Services
                 chatHistory = await _chatRepository.GetBySessionIdAsync(sessionId, userId);
             }
 
-            // 4. Build enriched AI context (queries products, categories, reviews from DB)
-            var (systemPrompt, productsWithGuides) = await BuildEnrichedContextAsync(bodyProfile);
+            // 4. Extract body info from entire conversation (history + current message)
+            var allUserMessages = chatHistory
+                .Where(m => m.Role == "user")
+                .Select(m => m.Content)
+                .Append(request.Message)
+                .ToList();
+
+            var conversationBody = ExtractBodyFromConversation(allUserMessages);
+
+            // Merge: DB profile takes base, conversation overrides missing fields
+            var effectiveBody = MergeBodyProfile(bodyProfile, conversationBody);
+
+            // Auto-save new measurements discovered in conversation to DB
+            if (conversationBody.HasAnyMeasurement)
+                await AutoSaveBodyProfileAsync(userId, bodyProfile, conversationBody);
+
+            // 5. Build enriched AI context (queries products filtered by gender/body)
+            var (systemPrompt, productsWithGuides) = await BuildEnrichedContextAsync(effectiveBody, conversationBody.Gender);
 
             // 6. Build conversation messages for Gemini
             var conversationParts = new List<object>();
 
-            // Add system instruction and history
             foreach (var msg in chatHistory)
             {
                 conversationParts.Add(new
@@ -88,7 +103,6 @@ namespace MV.ApplicationLayer.Services
             {
                 _logger.LogError(ex, "Error calling Gemini API: {Message}", ex.Message);
 
-                // Hiển thị message thân thiện với user, không lộ lỗi kỹ thuật
                 if (ex.Message == "RATE_LIMIT_EXCEEDED")
                     aiResponse = "Mình đang có quá nhiều người dùng cùng lúc 😅 Bạn vui lòng thử lại sau vài giây nhé! 🙏";
                 else
@@ -134,12 +148,9 @@ namespace MV.ApplicationLayer.Services
 
                 suggestedProducts = products.Select(p =>
                 {
-                    // Determine recommended size based on body profile
                     string? recommendedSize = null;
-                    if (bodyProfile != null && p.SizeGuides.Any())
-                    {
-                        recommendedSize = FindBestSize(bodyProfile, p.SizeGuides.ToList());
-                    }
+                    if (effectiveBody != null && p.SizeGuides.Any())
+                        recommendedSize = FindBestSize(effectiveBody, p.SizeGuides.ToList());
 
                     return new ChatSuggestedProduct
                     {
@@ -150,6 +161,7 @@ namespace MV.ApplicationLayer.Services
                         RecommendedSize = recommendedSize,
                         PrimaryImage = p.ProductImages
                             .FirstOrDefault(img => img.IsPrimary == true)?.ImageUrl
+                            ?? p.ProductImages.FirstOrDefault()?.ImageUrl
                     };
                 }).ToList();
             }
@@ -221,66 +233,215 @@ namespace MV.ApplicationLayer.Services
             return ApiResponse<object>.SuccessResponse($"Chat session deleted. {deletedCount} messages removed.");
         }
 
+        #region Body Extraction Helpers
+
+        // DTO to hold body measurements extracted from conversation
+        private class ConversationBodyData
+        {
+            public decimal? Height { get; set; }
+            public decimal? Weight { get; set; }
+            public decimal? Bust { get; set; }
+            public decimal? Waist { get; set; }
+            public decimal? Hips { get; set; }
+            public string? Gender { get; set; } // "nam" or "nữ"
+
+            public bool HasAnyMeasurement =>
+                Height.HasValue || Weight.HasValue || Bust.HasValue ||
+                Waist.HasValue || Hips.HasValue || !string.IsNullOrEmpty(Gender);
+        }
+
+        private ConversationBodyData ExtractBodyFromConversation(List<string> userMessages)
+        {
+            var data = new ConversationBodyData();
+            var fullText = string.Join(" ", userMessages).ToLower();
+
+            // Height: "cao 179cm", "179 cm", "1m79", "1.79m"
+            var heightPatterns = new[]
+            {
+                @"cao\s*(\d{2,3})\s*cm",
+                @"(\d{3})\s*cm",
+                @"1[m.](\d{2})\b",   // 1m79, 1.79
+                @"(\d{3})\s*m\b"
+            };
+            foreach (var pattern in heightPatterns)
+            {
+                var m = Regex.Match(fullText, pattern);
+                if (m.Success && decimal.TryParse(m.Groups[1].Value, out decimal h))
+                {
+                    // Convert 1m79 → 179
+                    if (pattern.Contains("1[m.]") && h < 100) h += 100;
+                    if (h >= 140 && h <= 220) { data.Height = h; break; }
+                }
+            }
+
+            // Weight: "nặng 86kg", "86 kg", "cân 86"
+            var weightMatch = Regex.Match(fullText, @"(?:n[aặ]ng|c[aâ]n|w[ei]ght)?\s*(\d{2,3})\s*kg");
+            if (weightMatch.Success && decimal.TryParse(weightMatch.Groups[1].Value, out decimal w) && w >= 30 && w <= 200)
+                data.Weight = w;
+
+            // Bust / Waist / Hips: "ngực 90", "eo 70", "hông 95"
+            var bustMatch = Regex.Match(fullText, @"(?:ng[uưự]c|bust|b)\s*[=:]?\s*(\d{2,3})");
+            if (bustMatch.Success && decimal.TryParse(bustMatch.Groups[1].Value, out decimal bust) && bust >= 60 && bust <= 150)
+                data.Bust = bust;
+
+            var waistMatch = Regex.Match(fullText, @"(?:eo|waist)\s*[=:]?\s*(\d{2,3})");
+            if (waistMatch.Success && decimal.TryParse(waistMatch.Groups[1].Value, out decimal waist) && waist >= 50 && waist <= 130)
+                data.Waist = waist;
+
+            var hipsMatch = Regex.Match(fullText, @"(?:h[oôồ]ng|mong|hips?)\s*[=:]?\s*(\d{2,3})");
+            if (hipsMatch.Success && decimal.TryParse(hipsMatch.Groups[1].Value, out decimal hips) && hips >= 60 && hips <= 150)
+                data.Hips = hips;
+
+            // Gender
+            if (Regex.IsMatch(fullText, @"\bt[oô]i\s+l[aà]\s+nam\b|\bnam\s+gi[oớ]i\b|\bcon\s+trai\b|\bgioi\s+tinh\s*[=:]\s*nam"))
+                data.Gender = "nam";
+            else if (Regex.IsMatch(fullText, @"\bt[oô]i\s+l[aà]\s+n[uữ]\b|\bn[uữ]\s+gi[oớ]i\b|\bcon\s+g[aá]i\b|\bgioi\s+tinh\s*[=:]\s*n[uữ]"))
+                data.Gender = "nữ";
+
+            return data;
+        }
+
+        private UserBodyProfile? MergeBodyProfile(UserBodyProfile? dbProfile, ConversationBodyData conv)
+        {
+            if (!conv.HasAnyMeasurement) return dbProfile;
+
+            var merged = new UserBodyProfile
+            {
+                UserId = dbProfile?.UserId ?? 0,
+                Height = conv.Height ?? dbProfile?.Height,
+                Weight = conv.Weight ?? dbProfile?.Weight,
+                Bust = conv.Bust ?? dbProfile?.Bust,
+                Waist = conv.Waist ?? dbProfile?.Waist,
+                Hips = conv.Hips ?? dbProfile?.Hips,
+                BodyShape = dbProfile?.BodyShape,
+                FitPreference = dbProfile?.FitPreference
+            };
+
+            return merged;
+        }
+
+        private async Task AutoSaveBodyProfileAsync(int userId, UserBodyProfile? existing, ConversationBodyData conv)
+        {
+            try
+            {
+                if (existing == null)
+                {
+                    var newProfile = new UserBodyProfile
+                    {
+                        UserId = userId,
+                        Height = conv.Height,
+                        Weight = conv.Weight,
+                        Bust = conv.Bust,
+                        Waist = conv.Waist,
+                        Hips = conv.Hips,
+                        UpdatedAt = DateTime.Now
+                    };
+                    _context.UserBodyProfiles.Add(newProfile);
+                }
+                else
+                {
+                    if (conv.Height.HasValue) existing.Height = conv.Height;
+                    if (conv.Weight.HasValue) existing.Weight = conv.Weight;
+                    if (conv.Bust.HasValue) existing.Bust = conv.Bust;
+                    if (conv.Waist.HasValue) existing.Waist = conv.Waist;
+                    if (conv.Hips.HasValue) existing.Hips = conv.Hips;
+                    existing.UpdatedAt = DateTime.Now;
+                }
+
+                await _context.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not auto-save body profile for user {UserId}", userId);
+            }
+        }
+
+        #endregion
+
         #region Helpers
 
         private async Task<(string prompt, List<Product> products)> BuildEnrichedContextAsync(
-            UserBodyProfile? bodyProfile)
+            UserBodyProfile? bodyProfile, string? genderFilter)
         {
-            // 1. Load products - giảm xuống 20, chỉ lấy thông tin cần thiết
-            var products = await _context.Products
+            // 1. Load products - filter by gender if known
+            var query = _context.Products
                 .Include(p => p.Category)
                 .Include(p => p.SizeGuides)
                 .Include(p => p.ProductVariants.Where(v => v.IsActive == true))
                 .Where(p => p.IsActive == true && p.IsDeleted != true)
-                .Where(p => p.ProductVariants.Any(v => (v.StockQuantity ?? 0) > 0))
+                .Where(p => p.ProductVariants.Any(v => (v.StockQuantity ?? 0) > 0));
+
+            // Filter by gender when known
+            if (!string.IsNullOrEmpty(genderFilter))
+            {
+                var g = genderFilter.ToLower();
+                if (g == "nam" || g == "male")
+                    query = query.Where(p => p.Gender == null || p.Gender == "" || p.Gender.Contains("Nam") || p.Gender.Contains("Unisex"));
+                else if (g == "nữ" || g == "nu" || g == "female")
+                    query = query.Where(p => p.Gender == null || p.Gender == "" || p.Gender.Contains("Nữ") || p.Gender.Contains("Nu") || p.Gender.Contains("Unisex"));
+            }
+
+            var products = await query
                 .OrderByDescending(p => p.IsFeatured)
                 .ThenByDescending(p => p.SoldCount)
-                .Take(20)
+                .Take(25)
                 .ToListAsync();
 
             var sb = new StringBuilder();
 
-            // === PERSONA (ngắn gọn) ===
-            sb.AppendLine("Ban la FashionStyle AI - tu van thoi trang Viet Nam. Xung 'minh', goi khach 'ban'. Tra loi tieng Viet, ngan gon, them emoji.");
-            sb.AppendLine("Khi goi y san pham: PHAI ghi [ID:X] sau ten san pham. Goi y toi da 3-5 san pham.");
-            sb.AppendLine("Khong dung tu miet thi ngoai hinh. Neu khach chua co so do: hoi chieu cao, can nang, 3 vong.");
+            // === PERSONA & QUY TAC PHAN HOI ===
+            sb.AppendLine("Ban la FashionStyle AI - chuyen gia tu van thoi trang Viet Nam.");
+            sb.AppendLine("Xung 'minh', goi khach 'ban'. Tra loi tieng Viet, than thien, co emoji.");
+            sb.AppendLine();
+            sb.AppendLine("QUY TAC BAT BUOC - QUAN TRONG:");
+            sb.AppendLine("1. Khi goi y san pham: LUON ghi [ID:X] sau ten san pham. Vi du: 'Ao Thun Basic [ID:5]'");
+            sb.AppendLine("2. Khi biet chieu cao/can nang: goi y NGAY 3-5 san pham phu hop, moi san pham 1 dong ngan gon.");
+            sb.AppendLine("3. MOI SAN PHAM chi ghi: ten [ID:X] - size phu hop - ly do ngan (khong qua 1 cau).");
+            sb.AppendLine("4. KHONG mo ta dai dong tung san pham trong text - he thong se tu hien thi anh, gia, size ben duoi.");
+            sb.AppendLine("5. Khong dung tu miet thi. Goi y phong cach phu hop voc dang.");
+            sb.AppendLine("6. Neu khach chua co thong so: hoi chieu cao, can nang (va 3 vong neu la nu).");
             sb.AppendLine("Xu huong 2024-2025: oversize, wide-leg, tone-on-tone, minimal.");
             sb.AppendLine();
 
-            // === THONG TIN KHACH HANG ===
+            // === THONG TIN BODY KHACH HANG ===
             if (bodyProfile != null)
             {
                 var info = new List<string>();
+                if (!string.IsNullOrEmpty(genderFilter)) info.Add($"gioi tinh: {genderFilter}");
                 if (bodyProfile.Height.HasValue) info.Add($"cao {bodyProfile.Height}cm");
                 if (bodyProfile.Weight.HasValue) info.Add($"nang {bodyProfile.Weight}kg");
                 if (bodyProfile.Bust.HasValue) info.Add($"nguc {bodyProfile.Bust}cm");
                 if (bodyProfile.Waist.HasValue) info.Add($"eo {bodyProfile.Waist}cm");
                 if (bodyProfile.Hips.HasValue) info.Add($"hong {bodyProfile.Hips}cm");
-                if (!string.IsNullOrEmpty(bodyProfile.BodyShape)) info.Add($"dang {bodyProfile.BodyShape}");
-                if (info.Any()) sb.AppendLine($"Khach hang: {string.Join(", ", info)}. Tu van size cu the theo bang size.");
+                if (!string.IsNullOrEmpty(bodyProfile.BodyShape)) info.Add($"dang nguoi: {bodyProfile.BodyShape}");
+
+                sb.AppendLine($"THONG SO KHACH: {string.Join(", ", info)}");
+                sb.AppendLine("=> Dua vao thong so nay de doi chieu bang size va goi y san pham phu hop NGAY.");
+            }
+            else if (!string.IsNullOrEmpty(genderFilter))
+            {
+                sb.AppendLine($"THONG SO KHACH: gioi tinh {genderFilter}. Chua co chieu cao/can nang - hay hoi them.");
             }
             else
             {
-                sb.AppendLine("Khach chua co so do. Hoi de tu van chinh xac hon.");
+                sb.AppendLine("THONG SO KHACH: Chua co. Hoi chieu cao, can nang truoc khi tu van size.");
             }
             sb.AppendLine();
 
             // === CATALOG SAN PHAM ===
-            sb.AppendLine("CATALOG (con hang):");
+            sb.AppendLine($"CATALOG SAN PHAM (con hang{(!string.IsNullOrEmpty(genderFilter) ? $", da loc cho {genderFilter}" : "")}):");
             foreach (var p in products)
             {
                 var price = p.SalePrice.HasValue && p.SalePrice < p.Price
-                    ? $"{p.SalePrice:N0}d(giam {p.Price:N0}d)"
+                    ? $"{p.SalePrice:N0}d(goc {p.Price:N0}d)"
                     : $"{p.Price:N0}d";
 
                 var catName = p.Category?.Name ?? "";
-                var gender = !string.IsNullOrEmpty(p.Gender) ? $"|{p.Gender}" : "";
+                var genderTag = !string.IsNullOrEmpty(p.Gender) ? $"|{p.Gender}" : "";
                 var brand = !string.IsNullOrEmpty(p.BrandName) ? $"|{p.BrandName}" : "";
-                var material = !string.IsNullOrEmpty(p.Material) ? $"|{p.Material}" : "";
 
-                sb.AppendLine($"[ID:{p.Id}]{p.Name}|{price}|{catName}{gender}{brand}{material}");
+                sb.AppendLine($"[ID:{p.Id}] {p.Name} | {price} | {catName}{genderTag}{brand}");
 
-                // Sizes - chỉ hiển thị tên size và range cân nặng (quan trọng nhất)
                 if (p.SizeGuides.Any())
                 {
                     var sizeList = p.SizeGuides
@@ -296,17 +457,16 @@ namespace MV.ApplicationLayer.Services
                                 parts.Add($"eo{sg.MinWaist}-{sg.MaxWaist}");
                             return parts.Any() ? $"{sg.SizeName}({string.Join(",", parts)})" : sg.SizeName;
                         });
-                    sb.AppendLine($"  Size: {string.Join(" | ", sizeList)}");
+                    sb.AppendLine($"  Bang size: {string.Join(" | ", sizeList)}");
                 }
 
-                // Màu sắc có hàng
                 var colors = p.ProductVariants
                     .Where(v => (v.StockQuantity ?? 0) > 0)
                     .GroupBy(v => v.Color)
                     .Select(g => g.Key)
                     .Where(c => !string.IsNullOrEmpty(c));
                 if (colors.Any())
-                    sb.AppendLine($"  Mau: {string.Join(", ", colors)}");
+                    sb.AppendLine($"  Mau sac: {string.Join(", ", colors)}");
             }
 
             return (sb.ToString(), products);
@@ -315,7 +475,7 @@ namespace MV.ApplicationLayer.Services
         private async Task<string> CallGeminiApiAsync(string systemPrompt, List<object> conversationParts)
         {
             var httpClient = _httpClientFactory.CreateClient();
-            var url = $"https://generativelanguage.googleapis.com/v1/models/{_geminiSettings.Model}:generateContent?key={_geminiSettings.ApiKey}";
+            var url = $"https://generativelanguage.googleapis.com/v1beta/models/{_geminiSettings.Model}:generateContent?key={_geminiSettings.ApiKey}";
 
             var requestBody = new
             {
@@ -391,18 +551,15 @@ namespace MV.ApplicationLayer.Services
         {
             var ids = new List<int>();
 
-            // Try to extract IDs from format [ID:X]
+            // Extract all [ID:X] from AI response - trust the AI's suggestions
             var idMatches = Regex.Matches(aiResponse, @"\[ID:(\d+)\]");
             foreach (Match match in idMatches)
             {
-                if (int.TryParse(match.Groups[1].Value, out int id))
-                {
-                    if (products.Any(p => p.Id == id) && !ids.Contains(id))
-                        ids.Add(id);
-                }
+                if (int.TryParse(match.Groups[1].Value, out int id) && !ids.Contains(id))
+                    ids.Add(id);
             }
 
-            // Also try to match product names mentioned in the response
+            // Fallback: match by product name if no IDs found
             if (!ids.Any())
             {
                 foreach (var product in products)
