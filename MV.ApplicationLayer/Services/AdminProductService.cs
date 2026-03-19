@@ -29,7 +29,7 @@ namespace MV.ApplicationLayer.Services
 
             var query = _context.Products
                 .Include(p => p.Category)
-                .Include(p => p.ProductImages.Where(img => img.IsPrimary == true))
+                .Include(p => p.ProductImages.OrderByDescending(img => img.IsPrimary).Take(1))
                 .Include(p => p.ProductVariants)
                 .Where(p => p.IsDeleted != true)
                 .AsQueryable();

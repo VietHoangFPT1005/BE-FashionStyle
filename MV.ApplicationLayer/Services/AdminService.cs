@@ -131,19 +131,29 @@ namespace MV.ApplicationLayer.Services
                 })
                 .ToListAsync();
 
-            // Top products (top 5 by sold count)
-            var topProducts = await _context.Products
-                .Where(p => p.IsActive == true && p.IsDeleted != true && (p.SoldCount ?? 0) > 0)
-                .OrderByDescending(p => p.SoldCount)
+            // Top products (top 5 by actual sold quantity from delivered orders)
+            var topProductSales = await _context.OrderItems
+                .Where(oi => oi.Order.Status == "DELIVERED" && oi.ProductVariantId != null)
+                .GroupBy(oi => oi.ProductVariant!.ProductId)
+                .Select(g => new { ProductId = g.Key, TotalSold = g.Sum(oi => oi.Quantity) })
+                .OrderByDescending(g => g.TotalSold)
                 .Take(5)
-                .Select(p => new DashboardTopProduct
+                .ToListAsync();
+
+            var topProductIds = topProductSales.Select(x => x.ProductId).ToList();
+            var topProductEntities = await _context.Products
+                .Where(p => topProductIds.Contains(p.Id) && p.IsActive == true && p.IsDeleted != true)
+                .ToListAsync();
+
+            var topProducts = topProductSales
+                .Join(topProductEntities, s => s.ProductId, p => p.Id, (s, p) => new DashboardTopProduct
                 {
                     ProductId = p.Id,
                     Name = p.Name,
-                    SoldCount = p.SoldCount ?? 0,
-                    Revenue = (p.SalePrice ?? p.Price) * (p.SoldCount ?? 0)
+                    SoldCount = s.TotalSold,
+                    Revenue = (p.SalePrice ?? p.Price) * s.TotalSold
                 })
-                .ToListAsync();
+                .ToList();
 
             var response = new DashboardResponse
             {

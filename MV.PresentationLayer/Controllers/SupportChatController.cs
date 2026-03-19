@@ -130,7 +130,7 @@ public class SupportChatController : ControllerBase
         if (result.Error != null)
             return BadRequest(ApiResponse.ErrorResponse(result.Error.Message));
 
-        return Ok(ApiResponse.SuccessResponse(result.SecureUrl.ToString()));
+        return Ok(ApiResponse<string>.SuccessResponse(result.SecureUrl.ToString(), "Upload thành công."));
     }
 
     // ── Helper ────────────────────────────────────────────────
