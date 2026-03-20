@@ -1,0 +1,61 @@
+services:
+  - type: web
+    name: be-fashionstyle
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    region: singapore
+    plan: free
+    healthCheckPath: /swagger/index.html
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: EnableSwagger
+        value: "true"
+      - key: ConnectionStrings__DefaultConnection
+        fromDatabase:
+          name: fashionstyle-db
+          property: connectionString
+      - key: Jwt__Key
+        sync: false
+      - key: Jwt__Issuer
+        value: SellFashion.API
+      - key: Jwt__Audience
+        value: SellFashion.Client
+      - key: Jwt__ExpireMinutes
+        value: "60"
+      - key: CloudinarySettings__CloudName
+        sync: false
+      - key: CloudinarySettings__ApiKey
+        sync: false
+      - key: CloudinarySettings__ApiSecret
+        sync: false
+      - key: SmtpSettings__Server
+        value: smtp.gmail.com
+      - key: SmtpSettings__Port
+        value: "587"
+      - key: SmtpSettings__SenderName
+        value: FashionStyle
+      - key: SmtpSettings__SenderEmail
+        sync: false
+      - key: SmtpSettings__Username
+        sync: false
+      - key: SmtpSettings__Password
+        sync: false
+      - key: SmtpSettings__EnableSsl
+        value: "true"
+      - key: SePay__ApiToken
+        sync: false
+      - key: Google__ClientId
+        sync: false
+      - key: Google__ClientSecret
+        sync: false
+      - key: Gemini__ApiKey
+        sync: false
+      - key: Gemini__Model
+        value: gemini-2.5-flash
+
+databases:
+  - name: fashionstyle-db
+    plan: free
+    databaseName: fashiondb
+    region: singapore

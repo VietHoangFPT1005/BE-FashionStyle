@@ -1,0 +1,10 @@
+bin/
+obj/
+.vs/
+.git/
+.github/
+*.md
+Doc/
+.claude/
+.gemini/
+*.user
