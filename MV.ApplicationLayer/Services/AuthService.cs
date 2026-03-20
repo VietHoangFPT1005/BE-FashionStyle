@@ -101,7 +101,15 @@ namespace MV.ApplicationLayer.Services
 
             // Send OTP email
             var htmlBody = BuildOtpEmailTemplate(otpCode, "Verify Your Account", OTP_EXPIRY_MINUTES);
-            await _emailService.SendEmailAsync(request.Email, "Email Verification - OTP Code", htmlBody);
+            try
+            {
+                await _emailService.SendEmailAsync(request.Email, "Email Verification - OTP Code", htmlBody);
+            }
+            catch (Exception ex)
+            {
+                // Render Free Tier blocks SMTP. Catch error and print OTP to console for testing
+                Console.WriteLine($"[RENDER SMTP BLOCKED] OTP for {request.Email} is: {otpCode}");
+            }
 
             return ApiResponse<RegisterResponse>.SuccessResponse(
                 new RegisterResponse
@@ -181,7 +189,14 @@ namespace MV.ApplicationLayer.Services
                 : "Reset Your Password";
 
             var htmlBody = BuildOtpEmailTemplate(otpCode, title, OTP_EXPIRY_MINUTES);
-            await _emailService.SendEmailAsync(request.Email, subject, htmlBody);
+            try
+            {
+                await _emailService.SendEmailAsync(request.Email, subject, htmlBody);
+            }
+            catch (Exception)
+            {
+                Console.WriteLine($"[RENDER SMTP BLOCKED] OTP for {request.Email} is: {otpCode}");
+            }
 
             return ApiResponse<object>.SuccessResponse(null, "A new OTP code has been sent to your email.");
         }
@@ -335,7 +350,14 @@ namespace MV.ApplicationLayer.Services
             await _otpCodeRepository.CreateAsync(otp);
 
             var htmlBody = BuildOtpEmailTemplate(otpCode, "Reset Your Password", OTP_EXPIRY_MINUTES);
-            await _emailService.SendEmailAsync(request.Email, "Password Reset - OTP Code", htmlBody);
+            try
+            {
+                await _emailService.SendEmailAsync(request.Email, "Password Reset - OTP Code", htmlBody);
+            }
+            catch (Exception)
+            {
+                Console.WriteLine($"[RENDER SMTP BLOCKED] OTP for {request.Email} is: {otpCode}");
+            }
 
             return ApiResponse<object>.SuccessResponse(null, "A password reset OTP has been sent to your email.");
         }
