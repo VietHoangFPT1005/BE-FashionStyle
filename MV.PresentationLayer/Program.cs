@@ -184,8 +184,8 @@ namespace MV.PresentationLayer
 
             // Background Services - Payment expiry auto-cancel + SePay polling
             // TODO: Bật lại khi deploy production (cần PostgreSQL running liên tục)
-            // builder.Services.AddHostedService<PaymentExpiryBackgroundService>();
-            // builder.Services.AddHostedService<SepayPollingBackgroundService>();
+            builder.Services.AddHostedService<PaymentExpiryBackgroundService>();
+            builder.Services.AddHostedService<SepayPollingBackgroundService>();
 
             // Repositories - Milestone 4
             builder.Services.AddScoped<IShipperLocationRepository, ShipperLocationRepository>();
