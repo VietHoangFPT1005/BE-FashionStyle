@@ -389,56 +389,56 @@ namespace MV.ApplicationLayer.Services
 
             var sb = new StringBuilder();
 
-            // === PERSONA & QUY TAC PHAN HOI ===
-            sb.AppendLine("Ban la FashionStyle AI - chuyen gia tu van thoi trang Viet Nam.");
-            sb.AppendLine("Xung 'minh', goi khach 'ban'. Tra loi tieng Viet, than thien, co emoji.");
+            // === PERSONA & QUY TẮC PHẢN HỒI ===
+            sb.AppendLine("Bạn là FashionStyle AI - chuyên gia tư vấn thời trang Việt Nam.");
+            sb.AppendLine("Xưng 'mình', gọi khách 'bạn'. Trả lời tiếng Việt, thân thiện, có emoji.");
             sb.AppendLine();
-            sb.AppendLine("QUY TAC BAT BUOC - QUAN TRONG:");
-            sb.AppendLine("1. Khi goi y san pham: LUON ghi [ID:X] sau ten san pham. Vi du: 'Ao Thun Basic [ID:5]'");
-            sb.AppendLine("2. Khi biet chieu cao/can nang: goi y NGAY 3-5 san pham phu hop, moi san pham 1 dong ngan gon.");
-            sb.AppendLine("3. MOI SAN PHAM chi ghi: ten [ID:X] - size phu hop - ly do ngan (khong qua 1 cau).");
-            sb.AppendLine("4. KHONG mo ta dai dong tung san pham trong text - he thong se tu hien thi anh, gia, size ben duoi.");
-            sb.AppendLine("5. Khong dung tu miet thi. Goi y phong cach phu hop voc dang.");
-            sb.AppendLine("6. Neu khach chua co thong so: hoi chieu cao, can nang (va 3 vong neu la nu).");
-            sb.AppendLine("Xu huong 2024-2025: oversize, wide-leg, tone-on-tone, minimal.");
+            sb.AppendLine("⚠️ QUY TẮC BẮT BUỘC - PHẢI TUÂN THỦ TUYỆT ĐỐI:");
+            sb.AppendLine("1. Khi gợi ý sản phẩm: LUÔN ghi [ID:X] ngay sau tên sản phẩm. Ví dụ: 'Áo Thun Basic [ID:5]'");
+            sb.AppendLine("2. Khi biết chiều cao/cân nặng: GỢI Ý NGAY 3-5 sản phẩm phù hợp ở cuối tin nhắn.");
+            sb.AppendLine("3. Mỗi sản phẩm viết 1 dòng ngắn gọn: Tên [ID:X] - Size phù hợp - lý do ngắn.");
+            sb.AppendLine("4. KHÔNG mô tả dài dòng từng sản phẩm - hệ thống sẽ tự hiển thị ảnh, giá, size bên dưới.");
+            sb.AppendLine("5. Không dùng từ miệt thị vóc dáng. Luôn tích cực và khuyến khích.");
+            sb.AppendLine("6. Nếu khách chưa có thông số: hỏi chiều cao, cân nặng (và 3 vòng nếu là nữ).");
+            sb.AppendLine("Xu hướng 2025: oversize, wide-leg, tone-on-tone, minimal.");
             sb.AppendLine();
 
-            // === THONG TIN BODY KHACH HANG ===
+            // === THÔNG TIN CƠ THỂ KHÁCH HÀNG ===
             if (bodyProfile != null)
             {
                 var info = new List<string>();
-                if (!string.IsNullOrEmpty(genderFilter)) info.Add($"gioi tinh: {genderFilter}");
+                if (!string.IsNullOrEmpty(genderFilter)) info.Add($"giới tính: {genderFilter}");
                 if (bodyProfile.Height.HasValue) info.Add($"cao {bodyProfile.Height}cm");
-                if (bodyProfile.Weight.HasValue) info.Add($"nang {bodyProfile.Weight}kg");
-                if (bodyProfile.Bust.HasValue) info.Add($"nguc {bodyProfile.Bust}cm");
+                if (bodyProfile.Weight.HasValue) info.Add($"nặng {bodyProfile.Weight}kg");
+                if (bodyProfile.Bust.HasValue) info.Add($"ngực {bodyProfile.Bust}cm");
                 if (bodyProfile.Waist.HasValue) info.Add($"eo {bodyProfile.Waist}cm");
-                if (bodyProfile.Hips.HasValue) info.Add($"hong {bodyProfile.Hips}cm");
-                if (!string.IsNullOrEmpty(bodyProfile.BodyShape)) info.Add($"dang nguoi: {bodyProfile.BodyShape}");
+                if (bodyProfile.Hips.HasValue) info.Add($"hông {bodyProfile.Hips}cm");
+                if (!string.IsNullOrEmpty(bodyProfile.BodyShape)) info.Add($"dáng người: {bodyProfile.BodyShape}");
 
-                sb.AppendLine($"THONG SO KHACH: {string.Join(", ", info)}");
-                sb.AppendLine("=> Dua vao thong so nay de doi chieu bang size va goi y san pham phu hop NGAY.");
+                sb.AppendLine($"📊 THÔNG SỐ KHÁCH HÀNG: {string.Join(", ", info)}");
+                sb.AppendLine("=> Dựa vào thông số này để đối chiếu bảng size và GỢI Ý NGAY sản phẩm phù hợp kèm [ID:X].");
             }
             else if (!string.IsNullOrEmpty(genderFilter))
             {
-                sb.AppendLine($"THONG SO KHACH: gioi tinh {genderFilter}. Chua co chieu cao/can nang - hay hoi them.");
+                sb.AppendLine($"📊 THÔNG SỐ KHÁCH HÀNG: giới tính {genderFilter}. Chưa có chiều cao/cân nặng - hãy hỏi thêm.");
             }
             else
             {
-                sb.AppendLine("THONG SO KHACH: Chua co. Hoi chieu cao, can nang truoc khi tu van size.");
+                sb.AppendLine("📊 THÔNG SỐ KHÁCH HÀNG: Chưa có. Hỏi chiều cao, cân nặng trước khi tư vấn size.");
             }
             sb.AppendLine();
 
-            // === CATALOG SAN PHAM ===
-            sb.AppendLine($"CATALOG SAN PHAM (con hang{(!string.IsNullOrEmpty(genderFilter) ? $", da loc cho {genderFilter}" : "")}):");
+            // === DANH MỤC SẢN PHẨM ===
+            sb.AppendLine($"🛍️ DANH MỤC SẢN PHẨM (còn hàng{(!string.IsNullOrEmpty(genderFilter) ? $", đã lọc cho {genderFilter}" : "")}):");
             foreach (var p in products)
             {
                 var price = p.SalePrice.HasValue && p.SalePrice < p.Price
-                    ? $"{p.SalePrice:N0}d(goc {p.Price:N0}d)"
-                    : $"{p.Price:N0}d";
+                    ? $"{p.SalePrice:N0}đ (gốc {p.Price:N0}đ)"
+                    : $"{p.Price:N0}đ";
 
                 var catName = p.Category?.Name ?? "";
-                var genderTag = !string.IsNullOrEmpty(p.Gender) ? $"|{p.Gender}" : "";
-                var brand = !string.IsNullOrEmpty(p.BrandName) ? $"|{p.BrandName}" : "";
+                var genderTag = !string.IsNullOrEmpty(p.Gender) ? $" | {p.Gender}" : "";
+                var brand = !string.IsNullOrEmpty(p.BrandName) ? $" | {p.BrandName}" : "";
 
                 sb.AppendLine($"[ID:{p.Id}] {p.Name} | {price} | {catName}{genderTag}{brand}");
 
@@ -452,12 +452,12 @@ namespace MV.ApplicationLayer.Services
                             if (sg.MinWeight.HasValue && sg.MaxWeight.HasValue)
                                 parts.Add($"{sg.MinWeight}-{sg.MaxWeight}kg");
                             if (sg.MinBust.HasValue && sg.MaxBust.HasValue)
-                                parts.Add($"nguc{sg.MinBust}-{sg.MaxBust}");
+                                parts.Add($"ngực{sg.MinBust}-{sg.MaxBust}");
                             if (sg.MinWaist.HasValue && sg.MaxWaist.HasValue)
                                 parts.Add($"eo{sg.MinWaist}-{sg.MaxWaist}");
                             return parts.Any() ? $"{sg.SizeName}({string.Join(",", parts)})" : sg.SizeName;
                         });
-                    sb.AppendLine($"  Bang size: {string.Join(" | ", sizeList)}");
+                    sb.AppendLine($"  Bảng size: {string.Join(" | ", sizeList)}");
                 }
 
                 var colors = p.ProductVariants
@@ -466,7 +466,7 @@ namespace MV.ApplicationLayer.Services
                     .Select(g => g.Key)
                     .Where(c => !string.IsNullOrEmpty(c));
                 if (colors.Any())
-                    sb.AppendLine($"  Mau sac: {string.Join(", ", colors)}");
+                    sb.AppendLine($"  Màu sắc: {string.Join(", ", colors)}");
             }
 
             return (sb.ToString(), products);
