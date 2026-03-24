@@ -12,6 +12,7 @@ namespace MV.PresentationLayer.Controllers
         /// Health check endpoint for uptime monitoring (UptimeRobot, etc.)
         /// </summary>
         [HttpGet("ping")]
+        [HttpPost("ping")]
         [SwaggerOperation(Summary = "Health check - server is running")]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [AllowAnonymous]
@@ -29,6 +30,7 @@ namespace MV.PresentationLayer.Controllers
         /// Simple status check (minimal response for lightweight monitoring)
         /// </summary>
         [HttpGet("status")]
+        [HttpPost("status")]
         [SwaggerOperation(Summary = "Quick status check")]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [AllowAnonymous]
